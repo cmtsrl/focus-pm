@@ -6,21 +6,34 @@ It brings together, in a single page, the daily dashboard, the rate calculator, 
 > **All data is fictional.** Clients, vendors, emails, Teams chats, tenders and costs are invented.
 > The repository contains no keys, passwords, links to real services or client data.
 
-## Start in one command
+## Open it (Windows and Mac)
 
-All you need is Python 3, which comes with macOS and Linux.
+Nothing to install: no Python, no Git. You only need an up-to-date browser (Chrome, Edge, Firefox or Safari).
+
+1. On this page click the green **Code** button, then **Download ZIP**.
+2. Extract the ZIP:
+   - **Windows:** right-click the file → **Extract All** → **Extract**.
+   - **Mac:** double-click the ZIP.
+3. In the extracted folder, double-click **index.html**. It opens in your browser.
+
+Good to know:
+
+- **Windows: extract first.** If you open `index.html` from inside the ZIP, Windows runs it from a temporary folder and your changes may not be kept.
+- **Windows: wrong program?** Right-click `index.html` → **Open with** → Chrome or Edge.
+- **Windows: file blocked?** Right-click the ZIP → **Properties** → tick **Unblock** → OK, then extract.
+- After editing the file, reload with **Ctrl+F5** (Windows) or **Cmd+Shift+R** (Mac).
+
+<details>
+<summary>Optional: run it as a local website</summary>
+
+Not needed for the workshop. If you have Python 3 installed (on Windows from python.org; on recent Macs `python3` asks to install the developer tools the first time), run this in the project folder and open http://localhost:8765:
 
 ```bash
-git clone https://github.com/cmtsrl/focus-pm.git && cd focus-pm && python3 -m http.server 8765
+python3 -m http.server 8765
 ```
 
-Then open **http://localhost:8765** in your browser.
-
-- On Windows, use `py -m http.server 8765` instead of `python3 -m http.server 8765`.
-- You can also just double-click `index.html`: it works without a server.
-- After editing the file, reload with Cmd+Shift+R (Mac) or Ctrl+F5 (Windows).
-
-Nothing to install, nothing to configure.
+On Windows the command is `py -m http.server 8765`.
+</details>
 
 ## What's inside
 
@@ -47,13 +60,33 @@ The parameters can be changed in the **Rate calculator** view and apply to the w
 
 ## Adding a feature with Claude
 
-Read [INSTRUCTIONS.md](INSTRUCTIONS.md). In short: give Claude the `index.html` file with the instructions, describe the feature you want, and Claude adds it to the TOOLS section without touching the rest.
+The rules Claude must follow are in [INSTRUCTIONS.md](INSTRUCTIONS.md): new features go in the TOOLS section, everything else stays as it is.
+
+### Recommended: Claude desktop app, Code tab (Windows and Mac)
+
+Needs a paid Claude plan (Pro, Max, Team or Enterprise). No Git, no GitHub account.
+
+1. Install the Claude desktop app from claude.ai/download and sign in.
+2. Download and extract this project as described in **Open it** above.
+3. In the app open the **Code** tab, choose **Local**, then **Open folder…** and select the extracted folder.
+4. First message: *"Read INSTRUCTIONS.md and follow it, skipping points 1 and 9. Then add this feature: …"*
+5. When Claude asks to edit the file, approve. Then reload `index.html` in your browser (Ctrl+F5 / Cmd+Shift+R) and open **Tools**.
+
+Tip: keep a copy of the extracted folder before big changes, so you can start again.
+
+### Alternative: Claude chat (any plan, including Free)
+
+1. In a new chat on claude.ai, attach `index.html` and `INSTRUCTIONS.md`.
+2. Write: *"Follow INSTRUCTIONS.md. Add this feature: …"*
+3. Claude shows the updated page as an artifact. At the end, download it and replace your `index.html`.
+
+The file is large for a chat: ask for one small feature at a time.
 
 ### Ready-made solutions
 
 Participants build the six ideas themselves. If someone gets stuck, each idea card in the **Tools** view has a **▶ Preview** button that opens a finished version of that tool, working on the demo data. Close it with the X or Esc.
 
-Each finished tool is also on its own branch, already added to the Tools list as a participant would add it:
+For presenters: each finished tool is also on its own branch, already added to the Tools list as a participant would add it:
 
 | Branch | Tool |
 |---|---|
