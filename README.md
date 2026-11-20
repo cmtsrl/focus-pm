@@ -60,7 +60,7 @@ The parameters can be changed in the **Rate calculator** view and apply to the w
 
 ## Adding a feature with Claude
 
-The rules Claude must follow are in [INSTRUCTIONS.md](INSTRUCTIONS.md): new features go in the TOOLS section, everything else stays as it is.
+The rules Claude must follow are in [INSTRUCTIONS.md](INSTRUCTIONS.md): new features go in the TOOLS section, everything else stays as it is. The same first message works in Claude Code and in the chat: Claude reads where it is working and delivers the changes the right way.
 
 ### Recommended: Claude desktop app, Code tab (Windows and Mac)
 
@@ -69,7 +69,7 @@ Needs a paid Claude plan (Pro, Max, Team or Enterprise). No Git, no GitHub accou
 1. Install the Claude desktop app from claude.ai/download and sign in.
 2. Download and extract this project as described in **Open it** above.
 3. In the app open the **Code** tab, choose **Local**, then **Open folder…** and select the extracted folder.
-4. First message: *"Read INSTRUCTIONS.md and follow it, skipping points 1 and 9. Then add this feature: …"*
+4. First message: *"Read INSTRUCTIONS.md and follow it. Then add this feature: …"*
 5. When Claude asks to edit the file, approve. Then reload `index.html` in your browser (Ctrl+F5 / Cmd+Shift+R) and open **Tools**.
 
 Tip: keep a copy of the extracted folder before big changes, so you can start again.
@@ -77,7 +77,7 @@ Tip: keep a copy of the extracted folder before big changes, so you can start ag
 ### Alternative: Claude chat (any plan, including Free)
 
 1. In a new chat on claude.ai, attach `index.html` and `INSTRUCTIONS.md`.
-2. Write: *"Follow INSTRUCTIONS.md. Add this feature: …"*
+2. Write: *"Read INSTRUCTIONS.md and follow it. Then add this feature: …"*
 3. Claude shows the updated page as an artifact. At the end, download it and replace your `index.html`.
 
 The file is large for a chat: ask for one small feature at a time.
