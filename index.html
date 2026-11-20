@@ -1,0 +1,1705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FOCUS PM · CMT</title>
+<!--
+=====
+HOW TO ADD A FEATURE  (instructions for Claude)
+=====
+FOCUS PM is the demo workbench for CMT project managers.
+It is one file: HTML, CSS and plain JavaScript. No libraries, no external
+fonts, no network requests. All data is FICTIONAL.
+
+1. New features are "tools". Add each one in the TOOLS section at the very
+   bottom of this file, with registerTool({ id, title, description, render }).
+   It appears in the Tools view by itself, in place of an empty slot.
+2. CSS for a tool goes in the TOOL STYLES block at the end of the <style> tag.
+   Start class names with the tool id, for example .capacity-grid.
+3. A tool talks to the app only through the api object given to render():
+     api.getRequests()          requests received by email and Teams (copies)
+     api.getQuotes()            saved quotes
+     api.getVendors()           vendors with language pairs and costs
+     api.getTenders()           public tenders (simulated SharePoint)
+     api.addRequest(data)       adds an item to the dashboard
+     api.openQuote(idOrText)    opens the quote window on a request or on a text
+     api.quote(text)            reads a text and returns lines, total and margin
+     api.price(line)            price of one line { svc, pair, qty, rep, days }
+     api.services               available services (words, minutes, hours)
+     api.toast(message)         short confirmation at the bottom right
+     api.formatMoney(n)  api.formatNumber(n)  api.formatDate(dateOrIso)
+     api.daysUntil(iso)         0 = today, negative = late
+     api.addWorkingDays(date, n) skips weekends and Italian public holidays
+     api.onChange(callback)     runs whenever the data changes
+     api.el(tag, attributes, ...children)  quick way to build HTML elements
+   Request fields: id, area, section ('urgent', 'week', 'waiting'), title,
+   from, received, due ('YYYY-MM-DD'), why, action, quote (true/false),
+   light ('red', 'amber', 'green'), note.
+4. Reuse the ready-made classes: panel, btn, btn primary, field, table, sub,
+   num, pair, row-actions, pill ok, pill low.
+5. Do not change the CORE section. To restyle everything, change only the
+   variables in the THEME section (CMT brand colours).
+6. Keep every existing view working. If a tool throws an error, the app
+   shows the message in that tool's card and keeps running.
+7. Any localStorage call must be wrapped in try/catch.
+8. Never use real client, vendor or price data: invented data only.
+9. The PREVIEWS section near the end holds finished examples of the ideas,
+   shown with the Preview button in the Tools view. Leave it as it is and do
+   not copy from it: build each new feature from scratch as a tool.
+
+Example:
+  registerTool({
+    id: 'word-counter',
+    title: 'Word counter',
+    description: 'Paste a text to count its words.',
+    render(container, api) {
+      const box = api.el('textarea', { rows: 4, 'aria-label': 'Text' });
+      const out = api.el('p', {}, '0 words');
+      box.addEventListener('input', () => {
+        out.textContent = api.formatNumber(box.value.trim().split(/\s+/).filter(Boolean).length) + ' words';
+      });
+      container.append(box, out);
+    }
+  });
+=====
+-->
+<style>
+/* ===== THEME: CMT brand colours and sizes ===== */
+:root {
+  --bordeaux:#7B1A1A; --bordeaux-soft:#F4ECEC; --bordeaux-ink:#FFFFFF;
+  --ink:#1A1A1A;       /* anthracite: text */
+  --paper:#F5F5F5;     /* light grey: page background */
+  --surface:#FFFFFF;   /* panels */
+  --rule:#E4E1E1;      /* borders */
+  --muted:#6E6A6A;     /* secondary text (AA contrast on white) */
+  --nav:#1A1A1A; --nav-ink:#FFFFFF; --nav-muted:#BDB8B8;
+  --red:#C62828; --amber:#E0A100; --green:#2E7D32;   /* dashboard traffic light */
+  --font:Arial, "Helvetica Neue", Helvetica, sans-serif;
+  --r-sm:4px; --r-md:8px; --r-lg:12px;
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px;
+  --t-xs:.75rem; --t-sm:.8125rem; --t-md:.9375rem; --t-lg:1.125rem; --t-xl:1.5rem; --t-2xl:2rem;
+  color-scheme:light;
+}
+
+/* ===== CORE STYLES ===== */
+* {box-sizing:border-box;}
+html, body {background:var(--paper);}
+body {margin:0;color:var(--ink);font:var(--t-md)/1.5 var(--font);-webkit-font-smoothing:antialiased;}
+button, input, select, textarea {font:inherit;color:inherit;}
+:focus-visible {outline:2px solid var(--bordeaux);outline-offset:2px;}
+h1:focus, main:focus {outline:none;}
+h1 {font:700 var(--t-2xl)/1.15 var(--font);margin:0;letter-spacing:-.01em;}
+h2 {font:700 var(--t-sm)/1.3 var(--font);margin:0 0 var(--s3);text-transform:uppercase;letter-spacing:.09em;color:var(--ink);}
+h2::before {content:"";display:inline-block;width:14px;height:3px;background:var(--bordeaux);margin-right:8px;vertical-align:3px;}
+.qm-head h2::before, dialog.dlg h2::before {display:none;}
+h3 {font:700 var(--t-md)/1.3 var(--font);margin:0;}
+p {margin:0 0 var(--s3);}
+.sub {color:var(--muted);font-size:var(--t-sm);margin:var(--s1) 0 0;}
+.num {font-variant-numeric:tabular-nums;}
+.pair {font-weight:700;letter-spacing:.04em;white-space:nowrap;font-variant-numeric:tabular-nums;}
+.r, .table .r {text-align:right;}
+.skip {position:absolute;left:-999px;}
+.skip:focus {left:8px;top:8px;z-index:60;background:var(--surface);padding:8px 12px;}
+.sr {position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);}
+
+.app {display:grid;grid-template-columns:220px minmax(0, 1fr);min-height:100vh;}
+.nav {background:var(--nav);color:var(--nav-ink);padding:var(--s5) var(--s3);display:flex;flex-direction:column;gap:2px;position:sticky;top:0;height:100vh;}
+.brand {display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:0 var(--s2) var(--s5);}
+.brand img {width:80px;height:auto;flex:none;}
+.brand b {display:block;font-size:1.0625rem;letter-spacing:.02em;}
+.brand small {display:block;font-size:var(--t-xs);color:var(--nav-muted);line-height:1.3;}
+.navbtn {display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;background:none;border:0;color:var(--nav-ink);padding:9px var(--s3);border-radius:var(--r-sm);text-align:left;cursor:pointer;}
+.navbtn:hover {background:rgba(255,255,255,.08);}
+.navbtn[aria-current="page"] {background:rgba(255,255,255,.12);box-shadow:inset 3px 0 0 var(--bordeaux);font-weight:700;}
+.navbtn .count {font-size:var(--t-xs);font-weight:700;background:var(--bordeaux);color:#fff;border-radius:10px;padding:0 7px;}
+.nav-foot {margin-top:auto;display:grid;gap:2px;}
+.nav-foot .navbtn {color:var(--nav-muted);font-size:var(--t-sm);}
+.nav-foot p {font-size:11px;color:var(--nav-muted);padding:var(--s2) var(--s3) 0;margin:0;line-height:1.4;}
+.nav :focus-visible {outline-color:#fff;}
+
+main {padding:var(--s6) var(--s6) var(--s7);max-width:1320px;width:100%;}
+.head {display:flex;justify-content:space-between;align-items:flex-end;gap:var(--s4);margin-bottom:var(--s5);flex-wrap:wrap;}
+.panel {background:var(--surface);border:1px solid var(--rule);border-radius:var(--r-md);padding:var(--s5);}
+.panel.flush {padding:0;overflow:hidden;}
+.stack > * + * {margin-top:var(--s5);}
+.grid2 {display:grid;grid-template-columns:minmax(0, 1.7fr) minmax(0, 1fr);gap:var(--s5);align-items:start;}
+.scroll {overflow-x:auto;}
+@media (max-width: 1280px) { .grid2.pv {grid-template-columns:1fr;} }
+
+.btn {display:inline-flex;align-items:center;gap:6px;border:1px solid var(--rule);background:var(--surface);padding:7px 14px;border-radius:var(--r-sm);cursor:pointer;font-weight:700;font-size:var(--t-sm);white-space:nowrap;color:var(--ink);}
+.btn:hover {border-color:var(--bordeaux);color:var(--bordeaux);}
+.btn.primary {background:var(--bordeaux);border-color:var(--bordeaux);color:#fff;}
+.btn.primary:hover {filter:brightness(1.15);color:#fff;}
+.btn.small {padding:4px 10px;font-size:var(--t-xs);}
+.btn svg {width:15px;height:15px;flex:none;}
+.btn:disabled {opacity:.5;cursor:default;}
+.link {background:none;border:0;padding:0;color:var(--bordeaux);cursor:pointer;text-decoration:underline;text-underline-offset:2px;font-weight:700;}
+.row-actions {display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center;}
+.pill {display:inline-block;border-radius:999px;padding:1px 9px;font-weight:700;font-size:var(--t-xs);font-variant-numeric:tabular-nums;border:1px solid var(--rule);white-space:nowrap;}
+.pill.ok {background:#EEF3EE;color:#1E5A22;border-color:transparent;}
+.pill.low {background:var(--bordeaux-soft);color:var(--bordeaux);border-color:var(--bordeaux);}
+.tag {display:inline-block;font-size:10px;letter-spacing:.07em;text-transform:uppercase;border:1px solid currentColor;border-radius:3px;padding:0 5px;color:var(--muted);font-weight:700;vertical-align:1px;}
+.tag.b {color:var(--bordeaux);}
+.empty {color:var(--muted);padding:var(--s3) 0;margin:0;}
+
+.field {display:grid;gap:4px;align-content:start;}
+.field label, .field .label {font-size:var(--t-xs);font-weight:700;color:var(--muted);}
+input, select, textarea {border:1px solid var(--rule);background:var(--surface);border-radius:var(--r-sm);padding:6px 9px;min-height:34px;width:100%;font-variant-numeric:tabular-nums;}
+textarea {resize:vertical;line-height:1.5;}
+.hint {color:var(--muted);font-size:var(--t-xs);}
+
+.table {width:100%;border-collapse:collapse;font-size:var(--t-sm);}
+.table th {text-align:left;font-weight:700;color:var(--muted);padding:9px 12px;border-bottom:1px solid var(--rule);white-space:nowrap;font-size:var(--t-xs);text-transform:uppercase;letter-spacing:.05em;}
+.table td {padding:10px 12px;border-bottom:1px solid var(--rule);vertical-align:top;}
+.table tr:last-child td {border-bottom:0;}
+.table .sub {margin:2px 0 0;font-size:var(--t-xs);}
+.table td.num, .table th.num {text-align:right;white-space:nowrap;}
+
+/* ----- Dashboard ----- */
+.hero {background:var(--bordeaux);color:#fff;border-radius:var(--r-md);padding:26px 30px;display:flex;flex-wrap:wrap;gap:20px 36px;align-items:center;justify-content:space-between;margin-bottom:var(--s5);}
+.hero h1 {color:#fff;}
+.hero p {margin:6px 0 0;color:rgba(255,255,255,.85);font-size:var(--t-sm);}
+.counts {display:flex;flex-wrap:wrap;}
+.counts div {padding:4px 20px;border-left:1px solid rgba(255,255,255,.3);display:flex;flex-direction:column;gap:2px;min-width:5.5rem;}
+.counts div:first-child {border-left:0;padding-left:0;}
+.counts b {font-size:34px;line-height:1;font-variant-numeric:tabular-nums;}
+.counts span {font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.85);}
+.hero :focus-visible {outline-color:#fff;}
+.filters {display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:var(--s4);}
+.filters .lbl {font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-right:4px;font-weight:700;}
+.chip {border:1px solid var(--rule);background:var(--surface);border-radius:999px;padding:6px 12px;cursor:pointer;font-size:var(--t-sm);display:inline-flex;gap:6px;align-items:center;}
+.chip:hover {border-color:var(--bordeaux);}
+.chip[aria-pressed="true"] {background:var(--bordeaux);border-color:var(--bordeaux);color:#fff;}
+.chip small {font-size:11px;opacity:.8;}
+.legend {display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-left:auto;}
+.legend span {display:inline-flex;align-items:center;gap:5px;}
+.legend i {width:10px;height:10px;border-radius:50%;display:inline-block;}
+.list {display:flex;flex-direction:column;gap:12px;}
+.card {border:1px solid var(--rule);border-left-width:5px;border-radius:var(--r-md);padding:14px 18px;background:var(--surface);display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 16px;}
+.card.st-red {border-left-color:var(--red);} .card.st-amber {border-left-color:var(--amber);} .card.st-green {border-left-color:var(--green);opacity:.85;}
+.card .meta {font-size:12px;color:var(--muted);grid-column:1;}
+.card .area {font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--bordeaux);margin-right:8px;font-weight:700;}
+.card .why {grid-column:1 / -1;margin:2px 0 0;color:#333;font-size:var(--t-sm);}
+.card .next {grid-column:1 / -1;display:flex;gap:8px;align-items:flex-start;font-weight:700;font-size:var(--t-sm);margin-top:2px;}
+.card .next svg {flex:none;margin-top:2px;}
+.card .due {grid-column:2;grid-row:1 / span 2;text-align:right;white-space:nowrap;display:flex;flex-direction:column;align-items:flex-end;gap:3px;}
+.card .due b {display:block;font-size:13px;color:var(--bordeaux);}
+.card .due span {font-size:12px;color:var(--muted);}
+.card .due.hot b {background:var(--bordeaux);color:#fff;padding:2px 8px;border-radius:4px;display:inline-block;}
+.card .acts {grid-column:1 / -1;display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;padding-top:10px;border-top:1px dashed var(--rule);}
+.sl {font-size:12px;border:1px solid var(--rule);background:var(--surface);border-radius:999px;padding:5px 10px 5px 8px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;}
+.sl i {width:11px;height:11px;border-radius:50%;display:inline-block;background:var(--c);}
+.sl.red {--c:var(--red);} .sl.amber {--c:var(--amber);} .sl.green {--c:var(--green);}
+.sl[aria-pressed="true"] {border-color:var(--c);color:var(--c);font-weight:700;background:color-mix(in srgb, var(--c) 9%, white);}
+.acts .sp {flex:1 1 auto;}
+.note {grid-column:1 / -1;background:#FFF9E6;border-left:3px solid var(--amber);padding:7px 10px;font-size:13px;border-radius:4px;white-space:pre-wrap;margin-top:6px;}
+.edit {grid-column:1 / -1;display:grid;gap:6px;margin-top:6px;}
+.side {background:var(--surface);border:1px solid var(--rule);border-radius:var(--r-md);padding:var(--s5);}
+.side section + section {margin-top:var(--s5);}
+.day {display:grid;grid-template-columns:3.2rem minmax(0,1fr);gap:12px;padding:9px 0;border-top:1px solid var(--rule);}
+.day:first-child {border-top:0;padding-top:0;}
+.dl {font-size:12px;color:var(--muted);line-height:1.2;}
+.dl b {display:block;font-size:19px;color:var(--ink);}
+.day.today .dl, .day.today .dl b {color:var(--bordeaux);}
+.it {font-size:13px;line-height:1.35;}
+.it + .it {margin-top:5px;}
+.it time {font-weight:700;color:var(--bordeaux);margin-right:6px;}
+.it.dead {color:var(--bordeaux);font-weight:700;}
+.mini > div {padding:6px 0 6px 10px;border-left:4px solid var(--amber);font-size:13px;}
+.mini > div + div {margin-top:8px;}
+.mini p {margin:2px 0 0;color:var(--muted);font-size:12px;}
+details.closed summary {cursor:pointer;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--green);font-weight:700;}
+details.closed .list {margin-top:12px;}
+.figs {display:grid;grid-template-columns:1fr 1fr;column-gap:var(--s4);}
+.fig {padding:9px 0;border-top:1px solid var(--rule);}
+.fig b {display:block;font-size:var(--t-xl);font-variant-numeric:tabular-nums;}
+.fig span {color:var(--muted);font-size:var(--t-xs);}
+
+/* ----- Quote window ----- */
+dialog.qm {position:fixed;inset:0;margin:auto;width:min(1180px, calc(100% - 32px));height:min(860px, calc(100% - 32px));max-width:none;max-height:none;padding:0;border:0;border-radius:var(--r-lg);background:var(--surface);color:var(--ink);box-shadow:0 30px 80px rgba(0,0,0,.35);overflow:hidden;}
+dialog.qm[open] {display:flex;flex-direction:column;}
+dialog.qm::backdrop {background:rgba(26,26,26,.55);}
+.qm-head {display:flex;align-items:center;gap:14px;padding:16px 20px;border-bottom:3px solid var(--bordeaux);flex:none;}
+.qm-head h2 {margin:0;font-size:var(--t-lg);text-transform:none;letter-spacing:0;color:var(--ink);}
+.qm-head .sub {margin:2px 0 0;}
+.qm-x {margin-left:auto;width:40px;height:40px;border-radius:50%;border:1px solid var(--rule);background:var(--surface);cursor:pointer;display:grid;place-items:center;flex:none;}
+.qm-x:hover {border-color:var(--bordeaux);color:var(--bordeaux);}
+.qm-body {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);flex:1 1 auto;min-height:0;}
+.qm-col {overflow:auto;padding:20px;min-width:0;}
+.qm-col + .qm-col {border-left:1px solid var(--rule);background:#FBFAFA;}
+.msg {border:1px solid var(--rule);border-radius:var(--r-md);background:var(--surface);}
+.msg-h {padding:10px 14px;border-bottom:1px solid var(--rule);font-size:var(--t-sm);display:grid;gap:2px;}
+.msg-h b {font-size:var(--t-md);}
+.msg-b {padding:14px;white-space:pre-wrap;font-size:var(--t-sm);line-height:1.6;}
+.msg-b mark {background:transparent;color:inherit;border-radius:3px;padding:0 2px;transition:background .35s, box-shadow .35s;}
+.msg-b mark.on {background:var(--bordeaux-soft);box-shadow:inset 0 -2px 0 var(--bordeaux);}
+.msg-b mark.on::after {content:attr(data-l);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:#fff;background:var(--bordeaux);border-radius:3px;padding:0 4px;margin-left:4px;vertical-align:2px;font-weight:700;}
+.scan {display:flex;flex-direction:column;gap:6px;margin:14px 0;font-size:var(--t-sm);}
+.scan div {display:flex;gap:8px;align-items:center;color:var(--muted);}
+.scan div.done {color:var(--ink);}
+.scan i {width:16px;height:16px;border-radius:50%;border:2px solid var(--rule);flex:none;display:grid;place-items:center;}
+.scan div.run i {border-color:var(--bordeaux);border-top-color:transparent;animation:spin .8s linear infinite;}
+.scan div.done i {background:var(--bordeaux);border-color:var(--bordeaux);}
+.scan div.done i::after {content:"";width:6px;height:3px;border:2px solid #fff;border-top:0;border-right:0;transform:rotate(-45deg) translate(1px,-1px);}
+@keyframes spin {to {transform:rotate(360deg);}}
+.src {display:inline-flex;gap:6px;align-items:center;font-size:11px;letter-spacing:.06em;text-transform:uppercase;font-weight:700;padding:3px 8px;border-radius:999px;border:1px solid var(--ink);justify-self:start;}
+.extract {display:grid;grid-template-columns:repeat(auto-fill, minmax(150px, 1fr));gap:10px;margin-bottom:16px;}
+.qlines {width:100%;border-collapse:collapse;font-size:var(--t-sm);margin-top:6px;}
+.qlines th {font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);text-align:left;padding:6px;border-bottom:1px solid var(--rule);}
+.qlines td {padding:7px 6px;border-bottom:1px solid var(--rule);vertical-align:top;}
+.qlines td input, .qlines td select {min-height:30px;padding:4px 6px;font-size:13px;}
+.qlines .how {font-size:11px;color:var(--muted);margin-top:3px;line-height:1.35;}
+.qlines td.num {text-align:right;white-space:nowrap;}
+.qtot {display:flex;flex-wrap:wrap;gap:16px 28px;align-items:flex-end;margin:18px 0;padding:16px 18px;border:2px solid var(--bordeaux);border-radius:var(--r-md);background:var(--surface);}
+.qtot .big {font-size:38px;font-weight:700;color:var(--bordeaux);line-height:1;font-variant-numeric:tabular-nums;}
+.qtot .lbl {font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:700;margin-bottom:6px;}
+.warnbox {background:#FFF9E6;border-left:3px solid var(--amber);padding:8px 12px;font-size:var(--t-sm);border-radius:4px;margin:8px 0;}
+.warnbox.bad {background:var(--bordeaux-soft);border-color:var(--bordeaux);}
+.qm-foot {display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;padding:12px 20px;border-top:1px solid var(--rule);flex:none;background:var(--surface);}
+.reply {min-height:190px;font-size:13px;}
+.seg {display:inline-flex;border:1px solid var(--rule);border-radius:var(--r-sm);overflow:hidden;}
+.seg button {border:0;border-right:1px solid var(--rule);background:var(--surface);padding:4px 10px;cursor:pointer;font-size:var(--t-xs);font-weight:700;}
+.seg button:last-child {border-right:0;}
+.seg button[aria-pressed="true"] {background:var(--ink);color:#fff;}
+.fade-in {animation:fin .4s ease-out both;}
+@keyframes fin {from {opacity:0;transform:translateY(6px);}}
+
+/* ----- Rate calculator ----- */
+.tcard {background:var(--surface);border:1px solid var(--rule);border-radius:var(--r-md);overflow:hidden;}
+.tcard + .tcard {margin-top:var(--s4);}
+.tcard-h {display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--rule);}
+.tcard-h .pair {font-size:22px;color:var(--bordeaux);}
+.tcard-b {display:grid;grid-template-columns:minmax(0,260px) minmax(0,1fr);gap:22px;padding:16px;}
+.costs {display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 8px;align-items:center;font-size:12.5px;}
+.costs b {font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);}
+.cap {margin-top:12px;padding:10px 12px;border:1px solid var(--rule);border-radius:6px;font-size:12.5px;display:grid;gap:6px;}
+.cap b {color:var(--bordeaux);}
+.tf-grid {display:grid;grid-template-columns:minmax(0,340px) minmax(0,1fr);gap:var(--s5);align-items:start;}
+@media (max-width: 1280px) { .tf-grid {grid-template-columns:1fr;} .tf-grid > aside {display:grid;grid-template-columns:1fr 1fr;gap:var(--s5);} .tf-grid > aside > * + * {margin-top:0;} }
+@media (max-width: 1100px) { body .tcard-b {grid-template-columns:1fr;} }
+@media (max-width: 760px) { .tf-grid > aside {grid-template-columns:1fr;} }
+.params {display:grid;grid-template-columns:1fr 1fr;gap:10px 12px;}
+
+/* ----- Tenders ----- */
+.sp-bar {display:flex;align-items:center;gap:8px;font-size:var(--t-sm);color:var(--muted);padding:10px 16px;border-bottom:1px solid var(--rule);background:#FBFAFA;}
+.sp-bar b {color:var(--ink);}
+.files {list-style:none;margin:0;padding:0;}
+.files li button {all:unset;box-sizing:border-box;display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:10px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--rule);cursor:pointer;width:100%;}
+.files li button:hover {background:var(--paper);}
+.files li button[aria-current="true"] {background:var(--bordeaux-soft);box-shadow:inset 3px 0 0 var(--bordeaux);}
+.files li button:focus-visible {outline:2px solid var(--bordeaux);outline-offset:-2px;}
+.fic {width:30px;height:36px;border:1.5px solid var(--bordeaux);border-radius:3px 9px 3px 3px;display:grid;place-items:center;font-size:9px;font-weight:700;color:var(--bordeaux);}
+.files .t {font-weight:700;font-size:var(--t-sm);line-height:1.3;}
+.files .m {font-size:var(--t-xs);color:var(--muted);overflow-wrap:anywhere;}
+.files li button > span:nth-child(2) {min-width:0;}
+.bgrid {display:grid;grid-template-columns:minmax(0,340px) minmax(0,1fr);gap:var(--s5);align-items:start;}
+.two {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--s5);align-items:start;}
+@media (max-width: 1280px) { body .bgrid {grid-template-columns:1fr;} .files {display:grid;grid-template-columns:repeat(auto-fit, minmax(240px,1fr));} .files li button {border-right:1px solid var(--rule);} }
+@media (max-width: 860px) { .two {grid-template-columns:1fr;} }
+.verdict {display:grid;grid-template-columns:auto minmax(0,1fr);gap:22px;align-items:center;}
+.ring {width:150px;height:150px;}
+.ring circle {fill:none;stroke-width:12;}
+.ring .bg {stroke:var(--paper);}
+.ring .fg {stroke:var(--bordeaux);stroke-linecap:round;transform:rotate(-90deg);transform-origin:50% 50%;transition:stroke-dashoffset 1.2s cubic-bezier(.2,.8,.2,1);}
+.ring text {font:700 34px var(--font);fill:var(--ink);text-anchor:middle;}
+.ring .rl {font:700 10px var(--font);letter-spacing:.1em;fill:var(--muted);}
+.vbadge {display:inline-block;font-weight:700;font-size:var(--t-lg);padding:4px 14px;border-radius:4px;margin-bottom:6px;}
+.vbadge.go {background:var(--bordeaux);color:#fff;} .vbadge.maybe {background:#FFF3CC;color:#5E4300;border:1px solid var(--amber);} .vbadge.no {background:var(--ink);color:#fff;}
+.req {list-style:none;margin:0;padding:0;}
+.req li {display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:10px;padding:9px 0;border-top:1px solid var(--rule);font-size:var(--t-sm);align-items:start;}
+.req li:first-child {border-top:0;}
+.req .ic {width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700;color:#fff;}
+.req .ic.y {background:var(--green);} .req .ic.n {background:var(--red);} .req .ic.p {background:var(--amber);color:#1A1A1A;}
+.req button.cite {font-size:11px;}
+.bars {display:grid;gap:7px;}
+.bar {display:grid;grid-template-columns:84px minmax(0,1fr) 92px;gap:10px;align-items:center;font-size:var(--t-sm);}
+.bar .tr {height:14px;background:var(--paper);border-radius:7px;overflow:hidden;}
+.bar .tr i {display:block;height:100%;background:var(--bordeaux);width:0;transition:width 1s cubic-bezier(.2,.8,.2,1);border-radius:7px;}
+.econ {display:grid;grid-template-columns:repeat(auto-fit, minmax(150px,1fr));gap:10px;}
+.econ div {border:1px solid var(--rule);border-radius:6px;padding:10px 12px;}
+.econ b {display:block;font-size:var(--t-lg);font-variant-numeric:tabular-nums;white-space:nowrap;}
+.econ span {font-size:var(--t-xs);color:var(--muted);}
+.econ div.hl {border-color:var(--bordeaux);background:var(--bordeaux-soft);}
+.econ div.hl b {color:var(--bordeaux);}
+.tline {display:grid;grid-template-columns:repeat(4, minmax(0,1fr));position:relative;margin-top:8px;}
+.tline::before {content:"";position:absolute;left:8px;right:8px;top:7px;height:2px;background:var(--rule);}
+.tline div {position:relative;padding:22px 6px 0 0;font-size:12px;line-height:1.3;}
+.tline div::before {content:"";position:absolute;top:0;left:0;width:16px;height:16px;border-radius:50%;background:var(--surface);border:3px solid var(--ink);}
+.tline div.key::before {border-color:var(--bordeaux);background:var(--bordeaux);}
+.tline b {display:block;font-size:13px;}
+.wsplit {display:flex;height:26px;border-radius:5px;overflow:hidden;font-size:12px;font-weight:700;color:#fff;}
+.wsplit span {display:grid;place-items:center;min-width:96px;white-space:nowrap;padding:0 6px;}
+.doc {max-height:420px;overflow:auto;white-space:pre-wrap;font-size:13px;line-height:1.6;border:1px solid var(--rule);border-radius:6px;padding:14px;background:#FCFCFC;}
+.doc mark {background:var(--bordeaux-soft);box-shadow:inset 0 -2px 0 var(--bordeaux);color:inherit;}
+.doc mark.flash {animation:fl 1.6s ease-out;}
+@keyframes fl {0%,40% {background:#FFE08A;}}
+.risk {display:grid;gap:8px;}
+.risk div {border-left:3px solid var(--bordeaux);padding:4px 10px;font-size:var(--t-sm);}
+.bscan {padding:40px 24px;text-align:center;}
+.bscan .scan {max-width:420px;margin:18px auto;text-align:left;}
+.progress {height:6px;background:var(--paper);border-radius:3px;overflow:hidden;max-width:420px;margin:0 auto;}
+.progress i {display:block;height:100%;background:var(--bordeaux);width:0;transition:width .4s;}
+
+/* ----- Tools ----- */
+.tools {display:grid;gap:var(--s5);}
+.slots {display:grid;grid-template-columns:repeat(auto-fill, minmax(250px, 1fr));gap:var(--s4);}
+.slot {border:1.5px dashed var(--muted);border-radius:var(--r-md);background:transparent;padding:var(--s5);text-align:left;min-height:170px;display:grid;align-content:start;gap:6px;}
+.slot:hover {border-color:var(--bordeaux);background:var(--surface);}
+.slot strong {font-size:var(--t-lg);}
+.slot span {color:var(--muted);font-size:var(--t-sm);}
+.slot em {font-style:normal;color:var(--bordeaux);font-weight:700;font-size:var(--t-sm);margin-top:var(--s2);}
+.slot .wow {font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--bordeaux);font-weight:700;}
+.plus {width:28px;height:28px;border-radius:50%;border:1.5px solid var(--bordeaux);color:var(--bordeaux);display:grid;place-items:center;font-size:18px;line-height:1;margin-bottom:var(--s2);}
+.slot {display:flex;flex-direction:column;align-items:flex-start;}
+.slot-actions {display:flex;flex-wrap:wrap;gap:8px;margin-top:auto;padding-top:var(--s3);}
+dialog.pvm .pv-body {overflow:auto;padding:20px;flex:1 1 auto;min-height:0;background:var(--paper);}
+.pv-note {display:flex;gap:8px;align-items:center;font-size:var(--t-sm);background:var(--bordeaux-soft);border-left:3px solid var(--bordeaux);padding:8px 12px;border-radius:4px;margin:0 0 16px;}
+.tool-err {border-left:4px solid var(--red);padding:var(--s2) var(--s4);}
+
+dialog.dlg {border:1px solid var(--rule);border-radius:var(--r-lg);padding:var(--s5);max-width:600px;width:calc(100% - 32px);background:var(--surface);color:var(--ink);}
+dialog.dlg::backdrop {background:rgba(26,26,26,.5);}
+dialog.dlg h2 {font-size:var(--t-lg);text-transform:none;letter-spacing:0;color:var(--ink);}
+dialog.dlg textarea {min-height:150px;margin:var(--s2) 0;}
+.dlg-actions {display:flex;gap:var(--s2);justify-content:flex-end;margin-top:var(--s4);}
+
+.toasts {position:fixed;bottom:20px;right:20px;display:grid;gap:8px;z-index:1000;}
+.toast {background:var(--ink);color:#fff;padding:10px 14px;border-radius:var(--r-sm);display:flex;gap:14px;align-items:center;box-shadow:0 8px 28px rgba(0,0,0,.22);animation:fin .22s ease-out;font-size:var(--t-sm);}
+.toast button {background:none;border:1px solid currentColor;color:inherit;border-radius:var(--r-sm);padding:2px 10px;cursor:pointer;font-weight:700;}
+.foot {margin-top:var(--s6);font-size:11px;color:var(--muted);display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;border-top:1px solid var(--rule);padding-top:var(--s3);}
+
+@media (max-width: 1000px) {
+  .app {grid-template-columns:minmax(0, 1fr);}
+  .nav {position:static;height:auto;flex-direction:row;flex-wrap:wrap;align-items:center;padding:var(--s3);}
+  .brand {padding:0 var(--s4) 0 var(--s2);flex-direction:row;align-items:center;}
+  .brand img {width:56px;}
+  .navbtn {width:auto;}
+  .nav-foot {margin:0 0 0 auto;display:flex;} .nav-foot p {display:none;}
+  main {padding:var(--s5) var(--s4) var(--s7);}
+  .grid2 {grid-template-columns:1fr;}
+  .qm-body {grid-template-columns:1fr;overflow:auto;} .qm-col {overflow:visible;}
+  .qm-col + .qm-col {border-left:0;border-top:1px solid var(--rule);}
+  .verdict {grid-template-columns:1fr;}
+}
+@media (prefers-reduced-motion:reduce) { * {animation:none !important;transition:none !important;}}
+
+/* ===== PREVIEW STYLES: finished examples, leave as they are ===== */
+.capacity-summary {margin:12px 0;font-size:var(--t-sm);}
+.capacity-grid {border-collapse:separate;border-spacing:3px;font-size:12px;font-variant-numeric:tabular-nums;}
+.capacity-grid th {font-size:11px;color:var(--muted);font-weight:700;padding:2px 6px;text-align:center;}
+.capacity-grid tbody th {text-align:left;color:var(--ink);font-size:13px;white-space:nowrap;padding-right:12px;}
+.capacity-grid tbody th .sub {display:block;font-weight:400;font-size:11px;margin:0;}
+.capacity-grid td {width:44px;height:34px;text-align:center;border-radius:4px;font-weight:700;}
+.capacity-grid td.num {background:none;color:var(--ink);}
+.capacity-grid tr.capacity-off {opacity:.25;}
+.briefing-text {margin-top:16px;border-left:3px solid var(--bordeaux);padding:4px 0 4px 14px;font-size:var(--t-md);}
+.briefing-text p {margin:0 0 6px;color:var(--muted);transition:color .2s;}
+.briefing-text p.briefing-now {color:var(--ink);font-weight:700;}
+.briefing-wave {display:inline-flex;gap:3px;align-items:center;height:22px;margin-left:6px;}
+.briefing-wave i {width:4px;height:6px;background:var(--rule);border-radius:2px;}
+.briefing-wave.on i {background:var(--bordeaux);animation:briefing-bar .9s ease-in-out infinite;}
+.briefing-wave.on i:nth-child(2) {animation-delay:.1s;} .briefing-wave.on i:nth-child(3) {animation-delay:.2s;}
+.briefing-wave.on i:nth-child(4) {animation-delay:.3s;} .briefing-wave.on i:nth-child(5) {animation-delay:.4s;}
+@keyframes briefing-bar {50% {height:22px;}}
+.file-grid {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:var(--s5);align-items:start;}
+@media (max-width: 860px) { .file-grid {grid-template-columns:1fr;} }
+.file-zone {display:grid;place-items:center;gap:4px;text-align:center;min-height:150px;border:2px dashed var(--muted);border-radius:var(--r-md);cursor:pointer;padding:20px;transition:background .2s, border-color .2s;}
+.file-zone span {color:var(--muted);font-size:var(--t-sm);}
+.file-zone:hover, .file-zone.on {border-color:var(--bordeaux);background:var(--bordeaux-soft);}
+.file-figs {display:grid;grid-template-columns:repeat(4, minmax(0,1fr));gap:8px;margin:8px 0;}
+.file-figs div {border:1px solid var(--rule);border-radius:6px;padding:8px 10px;}
+.file-figs b {display:block;font-size:var(--t-xl);color:var(--bordeaux);font-variant-numeric:tabular-nums;}
+.file-figs span {font-size:var(--t-xs);color:var(--muted);}
+.file-opts {display:grid;grid-template-columns:1fr 1.4fr .8fr;gap:10px;margin-top:12px;}
+.risk-h {font-size:var(--t-sm);margin:8px 0;}
+.risk-list {list-style:none;margin:0 0 16px;padding:0;display:grid;gap:10px;}
+.risk-row {display:grid;grid-template-columns:64px minmax(0,1fr);gap:14px;align-items:center;}
+.risk-top .risk-row {border:1px solid var(--rule);border-radius:var(--r-md);padding:12px;}
+.risk-score {border-radius:8px;padding:6px 0;text-align:center;color:#fff;}
+.risk-score b {display:block;font-size:22px;line-height:1;}
+.risk-score span {font-size:10px;text-transform:uppercase;letter-spacing:.06em;}
+.risk-track {height:8px;background:var(--paper);border-radius:4px;overflow:hidden;margin:6px 0 2px;}
+.risk-track i {display:block;height:100%;border-radius:4px;}
+.risk-high {background:var(--red);} .risk-mid {background:var(--amber);} .risk-low {background:var(--green);}
+.risk-score.risk-mid {color:#1A1A1A;}
+.history-opts {display:grid;grid-template-columns:repeat(2, minmax(0,240px));gap:12px;}
+.history-note {margin:14px 0 6px;font-size:var(--t-sm);}
+.history-note .history-warn {color:var(--bordeaux);}
+.history-chart svg {width:100%;max-width:720px;height:auto;display:block;}
+.history-grid {stroke:var(--rule);stroke-width:1;}
+.history-axis {font:11px var(--font);fill:var(--muted);}
+.history-avg {stroke:var(--ink);stroke-width:1.5;stroke-dasharray:5 4;}
+.history-dot {fill:#fff;stroke:var(--ink);stroke-width:2;}
+.history-now {fill:var(--bordeaux);}
+.history-label {font:700 12px var(--font);fill:var(--bordeaux);}
+.deadline-opts {display:grid;grid-template-columns:repeat(3, minmax(0,220px));gap:12px;}
+@media (max-width: 760px) { .deadline-opts {grid-template-columns:1fr;} }
+.deadline-big {margin:18px 0 4px;display:flex;flex-direction:column;gap:2px;}
+.deadline-big span {font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:700;}
+.deadline-big b {font-size:28px;color:var(--bordeaux);}
+.deadline-strip {display:flex;flex-wrap:wrap;gap:4px;margin:14px 0 8px;}
+.deadline-day {width:38px;border-radius:6px;padding:4px 0;text-align:center;font-size:11px;border:1px solid var(--rule);}
+.deadline-day span {display:block;opacity:.8;}
+.deadline-day b {font-size:14px;}
+.deadline-work {background:var(--bordeaux);color:#fff;border-color:var(--bordeaux);}
+.deadline-rev {background:var(--bordeaux-soft);color:var(--bordeaux);border-color:var(--bordeaux);}
+.deadline-weekend {background:var(--paper);color:var(--muted);}
+.deadline-holiday {background:#FFF3CC;color:#5E4300;border-color:var(--amber);}
+.deadline-legend {display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);}
+.deadline-legend span {display:inline-flex;gap:5px;align-items:center;}
+.deadline-legend i {width:12px;height:12px;border-radius:3px;display:inline-block;border:1px solid var(--rule);}
+
+/* ===== TOOL STYLES: add CSS for tools below this line ===== */
+
+</style>
+</head>
+<body>
+<button class="skip" data-act="skip">Skip to content</button>
+<div class="app">
+  <nav class="nav" aria-label="Main">
+    <div class="brand"><img alt="CMT" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAKYAAACcCAYAAAD1adC8AAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAyZpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADw/eHBhY2tldCBiZWdpbj0i77u/IiBpZD0iVzVNME1wQ2VoaUh6cmVTek5UY3prYzlkIj8+IDx4OnhtcG1ldGEgeG1sbnM6eD0iYWRvYmU6bnM6bWV0YS8iIHg6eG1wdGs9IkFkb2JlIFhNUCBDb3JlIDcuMS1jMDAwIDc5LjljY2M0ZGU5MywgMjAyMi8wMy8xNC0xNDowNzoyMiAgICAgICAgIj4gPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4gPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIgeG1sbnM6eG1wPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvIiB4bWxuczp4bXBNTT0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL21tLyIgeG1sbnM6c3RSZWY9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9zVHlwZS9SZXNvdXJjZVJlZiMiIHhtcDpDcmVhdG9yVG9vbD0iQWRvYmUgUGhvdG9zaG9wIDIzLjMgKFdpbmRvd3MpIiB4bXBNTTpJbnN0YW5jZUlEPSJ4bXAuaWlkOkE3N0Q3OTQ5QzVGQzExRUM4MzIxREU2QjVCODQ1RTE1IiB4bXBNTTpEb2N1bWVudElEPSJ4bXAuZGlkOkE3N0Q3OTRBQzVGQzExRUM4MzIxREU2QjVCODQ1RTE1Ij4gPHhtcE1NOkRlcml2ZWRGcm9tIHN0UmVmOmluc3RhbmNlSUQ9InhtcC5paWQ6QTc3RDc5NDdDNUZDMTFFQzgzMjFERTZCNUI4NDVFMTUiIHN0UmVmOmRvY3VtZW50SUQ9InhtcC5kaWQ6QTc3RDc5NDhDNUZDMTFFQzgzMjFERTZCNUI4NDVFMTUiLz4gPC9yZGY6RGVzY3JpcHRpb24+IDwvcmRmOlJERj4gPC94OnhtcG1ldGE+IDw/eHBhY2tldCBlbmQ9InIiPz6aq8YHAAAih0lEQVR42uxd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"><div><b>FOCUS PM</b><small>CMT · Communication Meets Translation</small></div></div>
+    <div id="navlinks" style="display:contents"></div>
+    <div class="nav-foot">
+      <button class="navbtn" type="button" data-act="reset">Reset demo data</button>
+      <p>Demo tool. All data is fictional.</p>
+    </div>
+  </nav>
+  <main id="main" tabindex="-1"></main>
+</div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<dialog id="dlg" class="dlg" aria-labelledby="dlg-title"></dialog>
+<dialog id="qm" class="qm" aria-labelledby="qm-title"></dialog>
+<dialog id="pv" class="qm pvm" aria-labelledby="pv-title"></dialog>
+
+<script>
+/* =====
+   CORE: data, navigation and views.
+   Do not change this section when adding a feature. Use the TOOLS
+   section at the bottom of the file and the api object instead.
+   ===== */
+
+/* ---------- Safe storage (works when localStorage is blocked) ---------- */
+const store = {
+  get(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+  del(k) { try { localStorage.removeItem(k); } catch (e) {} }
+};
+const DATA_KEY = 'focuspm.en.v1';
+
+/* ---------- Dates (Italian public holidays are not working days) ---------- */
+const DAY = 864e5;
+const startOfDay = d => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+const today = () => startOfDay(new Date());
+const pad = n => String(n).padStart(2, '0');
+const iso = d => { const x = new Date(d); return x.getFullYear() + '-' + pad(x.getMonth() + 1) + '-' + pad(x.getDate()); };
+const parseDate = s => { if (s instanceof Date) return startOfDay(s); const [y, m, d] = String(s).split('-').map(Number); return new Date(y, m - 1, d); };
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const daysUntil = s => Math.round((parseDate(s) - today()) / DAY);
+const HOLIDAYS = ['01-01', '01-06', '04-25', '05-01', '06-02', '08-15', '11-01', '12-08', '12-25', '12-26'];
+const isHoliday = d => HOLIDAYS.indexOf(iso(d).slice(5)) >= 0;
+const isWeekend = d => d.getDay() === 0 || d.getDay() === 6;
+const isWorkday = d => !isWeekend(d) && !isHoliday(d);
+function addWorkingDays(date, n) {
+  let x = startOfDay(parseDate(date)), step = n < 0 ? -1 : 1, left = Math.abs(n);
+  while (left > 0) { x = addDays(x, step); if (isWorkday(x)) left--; }
+  return x;
+}
+function workingDaysBetween(a, b) { let n = 0, x = startOfDay(a); const end = startOfDay(b); while (x < end) { x = addDays(x, 1); if (isWorkday(x)) n++; } return n; }
+
+/* ---------- Formatting ---------- */
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const group = (n, dec) => { const [i, d] = Math.abs(n).toFixed(dec).split('.'); return (n < 0 ? '−' : '') + i.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (d ? '.' + d : ''); };
+const fmtMoney = n => '€' + group(n || 0, 2);
+const fmtRate = n => isFinite(n) ? '€' + group(Number(n), 3) : '–';
+const fmtNum = n => { const x = Number(n || 0); return group(x, Number.isInteger(x) ? 0 : 1); };
+const fmtPct = n => isFinite(n) ? (n * 100).toFixed(1) + '%' : '–';
+const fmtDate = (d, long) => parseDate(d).toLocaleDateString('en-GB', long ? { weekday: 'long', day: 'numeric', month: 'long' } : { weekday: 'short', day: 'numeric', month: 'short' });
+const fmtShort = d => parseDate(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+const pairLabel = p => String(p || '').replace('<>', ' ‹› ').replace(/>/, ' › ');
+const pairText = p => String(p || '').replace('<>', ' <> ').replace(/([A-Z])>([A-Z])/, '$1 > $2');
+const numDec = s => parseFloat(String(s).replace(',', '.'));
+const when = d => d < 0 ? 'overdue' : d === 0 ? 'today' : d === 1 ? 'tomorrow' : 'in ' + d + ' days';
+
+/* ---------- Languages and services ---------- */
+const LANGS = { IT: 'Italian', EN: 'English', FR: 'French', DE: 'German', ES: 'Spanish', PT: 'Portuguese', NL: 'Dutch', PL: 'Polish', RO: 'Romanian', RU: 'Russian', JA: 'Japanese', ZH: 'Chinese', AR: 'Arabic', FI: 'Finnish', HU: 'Hungarian', KO: 'Korean', EL: 'Greek', TR: 'Turkish' };
+const LANG_WORDS = {}; Object.keys(LANGS).forEach(k => { LANG_WORDS[LANGS[k].toLowerCase()] = k; });
+/* Languages with a higher markup (example scheme: 40% for rare languages) */
+const RARE = ['JA', 'ZH', 'AR', 'FI', 'HU', 'KO', 'EL', 'TR', 'RU'];
+const SERVICES = {
+  tep:  { label: 'Translation + revision (TEP)', unit: 'words', kind: 'tr' },
+  trad: { label: 'Translation only', unit: 'words', kind: 'tr' },
+  mtpe: { label: 'MT post-editing + revision', unit: 'words', kind: 'mt' },
+  rev:  { label: 'Revision only', unit: 'words', kind: 'tr' },
+  sub:  { label: 'Subtitling', unit: 'minutes' },
+  tra:  { label: 'Transcription', unit: 'minutes' },
+  int:  { label: 'Interpreting', unit: 'hours' },
+  dtp:  { label: 'Desktop publishing (DTP)', unit: 'hours' }
+};
+const UNIT_ONE = { words: 'word', minutes: 'minute', hours: 'hour' };
+
+/* ---------- Sample data (ALL FICTIONAL), dates relative to today ---------- */
+const DEFAULT_PARAMS = { mk: 35, mkRare: 40, mkPe: 40, step: 0.005, rush: 10, srush: 25, molMin: 25.93, revH: 45, revProd: 1000, repP: 30, dtpP: 35,
+  thr: { tr: { d: [2000, 3500], l: [2500, 4500] }, mt: { d: [4000, 5500], l: [4500, 6500] } } };
+/* vendor costs: €/word (trad, rev, pe), €/minute (sub, tra), €/hour (int, dtp) */
+const SEED_VENDORS = [
+  ['f1', 'Marta Lindqvist', 'Gothenburg', 'EN>IT FR>IT', { trad: .065, rev: .022, pe: .038 }],
+  ['f2', 'Davide Orsenigo', 'Como', 'EN>IT DE>IT', { trad: .078, rev: .025, pe: .042, int: 48 }],
+  ['f3', 'Hélène Marchetti', 'Lyon', 'IT>FR EN>FR', { trad: .072, rev: .024, pe: .04 }],
+  ['f4', 'Jonas Albrecht', 'Leipzig', 'EN>DE IT>DE', { trad: .082, rev: .028, pe: .045 }],
+  ['f5', 'Inés Calderón', 'Seville', 'IT>ES EN>ES', { trad: .06, rev: .02, pe: .035 }],
+  ['f6', 'Nadia Farouk', 'Alexandria', 'IT>AR EN>AR', { trad: .09, rev: .03 }],
+  ['f7', 'Wei Lun Zhang', 'Taipei', 'IT>ZH EN>ZH', { trad: .095, rev: .035, pe: .055 }],
+  ['f8', 'Camille Roux', 'Nantes', 'FR>IT EN>IT', { trad: .07, rev: .024, sub: 2.4, tra: 1.6 }],
+  ['f9', 'Oliver Penhallow', 'Bath', 'IT>EN IT<>EN', { trad: .074, rev: .025, pe: .042, int: 55 }],
+  ['f10', 'Linea Nove Design Studio', 'Bergamo', 'DTP', { dtp: 25 }],
+  ['f11', 'Lucía Montaner', 'Valencia', 'EN>ES EN>IT', { trad: .068, rev: .023, pe: .036, sub: 2.1 }],
+  ['f12', 'Katarzyna Wójcik', 'Wrocław', 'EN>PL', { trad: .066, rev: .022, pe: .037 }],
+  ['f13', 'Haruka Moriyama', 'Kyoto', 'IT>JA EN>JA', { trad: .11, rev: .04, pe: .06 }]
+];
+const MSG = {
+  r1: { channel: 'email', from: 'Elena Ricciardi · Valmarino Pharma <e.ricciardi@valmarino.example>', subject: 'Quote request: patient leaflet',
+    body: 'Good morning,\n\nwe would like a quote for the translation of the patient information leaflet for our new supplement, Valmarino Flex, from English into Italian and German.\n\nThe file has 4,200 words, including 900 repetitions. We need translation with revision by a second linguist, delivery within 3 working days.\n\nCould you also confirm the turnaround if we approve today?\n\nThank you and kind regards,\nElena Ricciardi\nRegulatory Affairs' },
+  r2: { channel: 'teams', from: 'PM colleague · Events team', subject: 'Teams chat · Nordlumen subtitles',
+    body: 'hi! Nordlumen Energy just sent the corporate video for their convention, 38 minutes in French. they want subtitling FR > IT, it is urgent because they screen it on Monday.\ncan you give me a quick price? thanks 🙏' },
+  r3: { channel: 'email', from: 'Events office · Altavalle Opera Foundation <events@altavalle.example>', subject: 'Interpreting for the 2027 season press conference',
+    body: 'Dear Sirs,\n\nfor the press conference presenting our 2027 opera season we need a consecutive interpreter IT<>EN for 6 hours (morning session and lunch with the international press).\n\nThe event will take place in Bergamo in two weeks. We look forward to your offer.\n\nBest regards\nEvents office' },
+  r4: { channel: 'email', from: 'Tom Hallberg · Orsa Games <loc@orsagames.example>', subject: 'Quote request: UI strings MTPE EN>IT',
+    body: 'Hi team,\n\nwe need a quote for machine translation post-editing (MTPE) of our new game UI, from English into Italian.\nThe batch is 12,500 words, including 3,000 repetitions. Delivery in 3 working days, please.\n\nPlaceholders like {player_name} and %d must stay untouched.\n\nThanks!\nTom' },
+  r5: { channel: 'teams', from: 'Colleague · Sales team', subject: 'Teams chat · Seta Nove brochure',
+    body: 'hi, Atelier Seta Nove wants the spring collection brochure translated EN > FR and EN > ES, 3,000 words.\nThere is also the InDesign layout: the designer estimates 5 hours of DTP.\nDelivery by Friday. Can you prepare the numbers for the offer?' }
+};
+/* section: urgent | week | waiting ; due = days from today */
+const SEED_REQUESTS = [
+  ['r1', 'Clients', 'urgent', 'Quote: patient leaflet EN > IT and DE', 'Valmarino Pharma', 0, 1, 'The client wants the turnaround today so they can approve the same day.', 'Prepare the quote and reply by noon.', true],
+  ['r2', 'Events', 'urgent', 'Subtitles for convention video FR > IT', 'Nordlumen Energy · via PM colleague', 0, 0, 'Screening on Monday: they need a price now to get started.', 'Price the 38 minutes with the rush surcharge.', true],
+  ['r4', 'Clients', 'urgent', 'Quote: game UI MTPE EN > IT', 'Orsa Games', 1, 1, '12,500-word batch with repetitions.', 'Prepare the quote and reply today.', true],
+  ['r6', 'Production', 'urgent', 'Ferrotecna delivery: QA missing on DE files', 'Ferrotecna Systems', 3, 0, 'The reviser has delivered, but the automatic QA check was never run.', 'Run QA and deliver by 5 pm.', false],
+  ['r3', 'Events', 'week', 'Press conference interpreting IT <> EN', 'Altavalle Opera Foundation', 2, 3, 'Event in two weeks, 6 hours of consecutive.', 'Check interpreter availability and send the offer.', true],
+  ['r5', 'Sales', 'week', 'Brochure EN > FR and ES with DTP', 'Atelier Seta Nove · via Sales', 1, 4, 'Combined offer: translation plus layout.', 'Prepare the numbers for Sales.', true],
+  ['r7', 'Production', 'week', 'ES > IT vendor silent for 2 days', 'Idrotech manuals batch', 2, 3, 'Risk of delay on batch 3 of the manuals.', 'Chase the vendor and line up a backup.', false],
+  ['r8', 'Tenders', 'week', 'New tender on SharePoint: Collinare Health Authority', 'SharePoint · Tenders', 1, 6, 'Tender documents uploaded yesterday. Bids due in 3 weeks.', 'Analyse the tender and decide whether to bid.', false],
+  ['r9', 'Sales', 'waiting', 'Order confirmation for sworn translation', 'Arcieri & Pozzi Law Firm', 4, 2, 'Quote sent on Tuesday, no reply yet.', '', false],
+  ['r10', 'Clients', 'waiting', 'Glossary approval from the client', 'Valmarino Pharma', 3, 5, 'Needed before batch 2 can start.', '', false]
+];
+const SEED_EVENTS = [[0, '09:30', 'PM team stand-up'], [0, '15:00', 'Ferrotecna progress call'], [1, '11:00', 'Orsa Games kick-off'], [2, '10:00', 'FOCUS PM: quoting session'], [3, '14:30', 'DTP vendors meeting'], [4, '09:00', 'Monthly margin review'], [7, '10:00', 'Altavalle press conference']];
+
+function seed() {
+  const t = today();
+  const due = off => { let d = addDays(t, off); while (off > 0 && !isWorkday(d)) d = addDays(d, 1); return iso(d); };
+  const vendors = SEED_VENDORS.map(v => ({ id: v[0], name: v[1], city: v[2], pairs: v[3].split(' '), rates: v[4], email: v[0] + '@vendors.example' }));
+  const requests = SEED_REQUESTS.map(r => ({ id: r[0], area: r[1], section: r[2], title: r[3], from: r[4], received: iso(addDays(t, -r[5])), due: due(r[6]), why: r[7], action: r[8], quote: r[9], msg: MSG[r[0]] || null }));
+  return { v: 1, seedDay: iso(t), params: JSON.parse(JSON.stringify(DEFAULT_PARAMS)), vendors, requests, status: {}, quotes: [], events: SEED_EVENTS.map(e => ({ day: due(e[0]), time: e[1], title: e[2] })), tenderDone: {} };
+}
+/* Demo dates stay relative to today: data saved days ago is shifted forward on load. */
+function shiftDates(s) {
+  const delta = s.seedDay ? Math.round((today() - parseDate(s.seedDay)) / DAY) : 0;
+  if (!delta) return s;
+  const mv = d => d ? iso(addDays(parseDate(d), delta)) : d;
+  s.requests.forEach(r => { r.due = mv(r.due); r.received = mv(r.received); });
+  s.events.forEach(e => { e.day = mv(e.day); });
+  s.quotes.forEach(q => { q.date = mv(q.date); });
+  s.seedDay = iso(today());
+  return s;
+}
+let state = (() => { const s = store.get(DATA_KEY); return s && s.v === 1 && Array.isArray(s.requests) && s.seedDay ? shiftDates(s) : seed(); })();
+
+/* ---------- Data access and changes ---------- */
+const clone = x => x == null ? null : JSON.parse(JSON.stringify(x));
+const findReq = id => state.requests.find(r => r.id === id) || null;
+let toolListeners = [];
+function save() { store.set(DATA_KEY, state); }
+function changed() {
+  save();
+  toolListeners.forEach(f => { try { f(clone(state)); } catch (e) { console.error('A tool listener failed:', e); } });
+  if (view.name !== 'tools' && view.name !== 'tenders' && view.name !== 'rates') render(false); else renderNav();
+}
+const defStatus = r => r.section === 'waiting' ? 'amber' : 'red';
+const statusOf = r => (state.status[r.id] && state.status[r.id].light) || defStatus(r);
+const isOpen = r => statusOf(r) !== 'green';
+function setStatus(id, patch) {
+  const prev = state.status[id] || {};
+  state.status[id] = Object.assign({ light: statusOf(findReq(id)), note: '' }, prev, patch, { at: Date.now() });
+  changed();
+}
+function addRequest(data) {
+  const r = Object.assign({ id: 'r' + Date.now(), area: 'Other', section: 'week', title: 'New item', from: '', received: iso(today()), due: iso(addWorkingDays(today(), 2)), why: '', action: '', quote: false, msg: null }, data);
+  state.requests.push(r); changed(); return clone(r);
+}
+/* copy of a request with its traffic light and note, as tools see it */
+const publicReq = r => Object.assign(clone(r), { light: statusOf(r), note: (state.status[r.id] && state.status[r.id].note) || '' });
+
+/* ---------- Small DOM helpers ---------- */
+const $ = s => document.querySelector(s);
+function el(tag, attrs, ...kids) {
+  const n = document.createElement(tag);
+  for (const k in attrs || {}) {
+    const v = attrs[k];
+    if (k === 'class') n.className = v;
+    else if (k.slice(0, 2) === 'on' && typeof v === 'function') n.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) n.setAttribute(k, v === true ? '' : v);
+  }
+  kids.flat(Infinity).forEach(c => { if (c != null && c !== false) n.append(c.nodeType ? c : String(c)); });
+  return n;
+}
+const options = (list, sel) => list.map(o => '<option value="' + esc(o[0]) + '"' + (String(o[0]) === String(sel) ? ' selected' : '') + '>' + esc(o[1]) + '</option>').join('');
+const ICON = {
+  x: '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>',
+  calc: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="1.5" width="10" height="13" rx="1.5"/><path d="M5.5 4.5h5M5.5 8h1M8 8h1M10.5 8h0M5.5 11h1M8 11h1M10.5 11h0"/></svg>',
+  arrow: '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h11M9 4l4 4-4 4" fill="none" stroke="#7B1A1A" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  mail: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="1.5" y="3" width="13" height="10" rx="1.5"/><path d="M2 4l6 5 6-5"/></svg>',
+  chat: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h12v8H7l-3 3v-3H2z"/></svg>',
+  search: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>'
+};
+
+function toast(msg, opts) {
+  opts = opts || {};
+  const n = el('div', { class: 'toast' }, el('span', {}, msg));
+  if (opts.action) n.append(el('button', { type: 'button', onclick: () => { n.remove(); opts.action.run(); } }, opts.action.label));
+  $('#toasts').append(n);
+  setTimeout(() => n.remove(), opts.action ? 7000 : 3500);
+}
+function openDialog(o) {
+  const d = $('#dlg');
+  d.replaceChildren(el('h2', { id: 'dlg-title' }, o.title), typeof o.body === 'string' ? el('p', {}, o.body) : o.body,
+    el('div', { class: 'dlg-actions' }, (o.actions || [{ label: 'Close' }]).map(a =>
+      el('button', { type: 'button', class: 'btn' + (a.primary ? ' primary' : ''), onclick: () => { if (a.run && a.run() === false) return; closeDialog(); } }, a.label))));
+  try { d.showModal(); } catch (e) { d.setAttribute('open', ''); }
+}
+function closeDialog() { const d = $('#dlg'); try { d.close(); } catch (e) { d.removeAttribute('open'); } }
+function copyText(text, okMsg) {
+  const done = () => toast(okMsg || 'Copied to the clipboard.');
+  const fallback = () => { const t = el('textarea', { style: 'position:fixed;left:-999px' }, text); document.body.append(t); t.select(); let ok = false; try { ok = document.execCommand('copy'); } catch (e) {} t.remove(); ok ? done() : toast('Select the text and copy it with Cmd+C or Ctrl+C.'); };
+  try { navigator.clipboard.writeText(text).then(done, fallback); } catch (e) { fallback(); }
+}
+
+/* =====================================================================
+   PRICING ENGINE (example scheme and invented vendor costs, not a real price list)
+   - reference cost = highest cost (max translation + max revision)
+   - price = cost × (1 + markup), rounded up to 0.005
+   - translation only = TEP −20%; MTPE + revision = (PE + rev) × 1.4
+   - revision only = max(rev × 1.4 ; €45/h ÷ 1,000 words/h)
+   - rush +10%, super rush +25% based on words per day
+   - margin = (price − cost) ÷ price, minimum 25.93%
+   Minutes and interpreting hours: demo rule (cost × markup), to be tuned.
+   ===================================================================== */
+const up = (x, s) => Math.ceil(x / s - 1e-9) * s;
+const pairKey = p => String(p || '').toUpperCase().replace(/\s/g, '').replace('<>', '>').replace('›', '>');
+function vendorsFor(pair, rateKey) {
+  const k = pairKey(pair), [a, b] = k.split('>'), bi = String(pair).indexOf('<>') > 0;
+  return state.vendors.filter(v => v.rates[rateKey] > 0 && (rateKey === 'dtp' || v.pairs.some(p => { const q = pairKey(p); return q === k || ((bi || p.indexOf('<>') > 0) && q === b + '>' + a); })));
+}
+function costRange(pair, rateKey) {
+  const vs = vendorsFor(pair, rateKey), xs = vs.map(v => v.rates[rateKey]);
+  return xs.length ? { min: Math.min(...xs), max: Math.max(...xs), n: xs.length, names: vs.map(v => v.name) } : null;
+}
+function markupFor(pair, svc) {
+  const P = state.params, [src, tgt] = pairKey(pair).split('>');
+  if (svc === 'mtpe' || svc === 'rev') return P.mkPe;
+  return RARE.indexOf(tgt) >= 0 || RARE.indexOf(src) >= 0 ? P.mkRare : P.mk;
+}
+/* base unit price of a service, before any rush surcharge */
+function unitPrice(svc, pair, costs) {
+  const P = state.params, s = P.step, f = x => (1 + x / 100).toFixed(2);
+  const c = costs || {};
+  const get = k => c[k] != null ? { max: c[k], min: c[k] } : costRange(pair, k);
+  const t = get('trad'), r = get('rev'), pe = get('pe');
+  const res = (price, cost, costMin, how, demo) => ({ price, cost, costMin: costMin == null ? cost : costMin, how, demo: !!demo });
+  if (svc === 'tep' || svc === 'trad') {
+    if (!t || !r) return null;
+    const mk = markupFor(pair, 'tep'), cost = t.max + r.max, tep = up(cost * (1 + mk / 100), s);
+    if (svc === 'tep') return res(tep, cost, t.min + r.min, '(' + fmtRate(t.max) + ' trans. + ' + fmtRate(r.max) + ' rev.) × ' + f(mk) + (mk > P.mk ? ' (rare language)' : ''));
+    return res(up(tep * 0.8, s), t.max, t.min, 'TEP ' + fmtRate(tep) + ' − 20%');
+  }
+  if (svc === 'mtpe') {
+    if (!pe || !r) return null;
+    const cost = pe.max + r.max;
+    return res(up(cost * (1 + P.mkPe / 100), s), cost, pe.min + r.min, '(' + fmtRate(pe.max) + ' PE + ' + fmtRate(r.max) + ' rev.) × ' + f(P.mkPe));
+  }
+  if (svc === 'rev') {
+    if (!r) return null;
+    const a = up(r.max * (1 + P.mkPe / 100), s), floor = up(P.revH / P.revProd, s);
+    return res(Math.max(a, floor), r.max, r.min, a >= floor ? fmtRate(r.max) + ' × ' + f(P.mkPe) : 'hourly minimum €' + P.revH + '/h ÷ ' + fmtNum(P.revProd) + ' words/h');
+  }
+  if (svc === 'sub' || svc === 'tra' || svc === 'int') {
+    const x = get(svc); if (!x) return null;
+    const step = svc === 'int' ? 1 : 0.05;
+    return res(up(x.max * (1 + P.mk / 100), step), x.max, x.min, fmtMoney(x.max) + ' cost × ' + f(P.mk) + ', rounded up to ' + (svc === 'int' ? '€1' : '€0.05'), true);
+  }
+  if (svc === 'dtp') { const x = get('dtp'); const cost = x ? x.max : 25; return res(P.dtpP, cost, x ? x.min : cost, 'DTP rate €' + P.dtpP + '/h'); }
+  return null;
+}
+function urgencyOf(line, cli, forced) {
+  const P = state.params, svc = SERVICES[line.svc] || {};
+  let lvl = 'std', wpd = NaN;
+  if (svc.unit === 'words') {
+    const th = P.thr[svc.kind === 'mt' ? 'mt' : 'tr'][cli === 'l' ? 'l' : 'd'];
+    const eff = (line.qty || 0) + (line.rep || 0) * P.repP / 100;
+    if (line.days > 0) wpd = eff / line.days;
+    if (line.days > 0 && line.days < 1) lvl = 'srush';
+    else if (isFinite(wpd)) lvl = wpd <= th[0] ? 'std' : wpd <= th[1] ? 'rush' : 'srush';
+  }
+  if (forced && lvl === 'std') lvl = 'rush';
+  if (line.urg && line.urg !== 'auto') lvl = line.urg;
+  const pct = lvl === 'rush' ? P.rush : lvl === 'srush' ? P.srush : 0;
+  return { lvl, pct, wpd, label: lvl === 'rush' ? 'Rush' : lvl === 'srush' ? 'Super rush' : 'Standard' };
+}
+/* full price of one line: { svc, pair, qty, rep, days, urg } */
+function priceLine(line, cli, forced) {
+  const base = unitPrice(line.svc, line.pair, line.costs);
+  if (!base) return { line, ok: false, why: 'No vendor with costs for ' + (line.pair ? pairText(line.pair) : 'this pair') + ' and this service.' };
+  const u = urgencyOf(line, cli, forced), P = state.params;
+  const unit = u.pct ? up(base.price * (1 + u.pct / 100), SERVICES[line.svc].unit === 'words' ? P.step : 0.05) : base.price;
+  const billable = (line.qty || 0) + (SERVICES[line.svc].unit === 'words' ? (line.rep || 0) * P.repP / 100 : 0);
+  const total = Math.round(billable * unit * 100) / 100, costTot = billable * base.cost;
+  return { line, ok: true, base, u, unit, billable, total, costTot, mol: (unit - base.cost) / unit, molB: (unit - base.costMin) / unit };
+}
+
+/* ---------- Reading emails and Teams messages ---------- */
+const WEEKDAYS = { monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5 };
+const NUMRE = '(\\d{1,3}(?:[.,\\s]\\d{3})+|\\d+)';
+function parseRequest(text) {
+  const T = String(text || ''), spans = [], mark = (m, label, idx) => { if (m) spans.push({ s: idx != null ? idx : m.index, e: (idx != null ? idx : m.index) + m[0].length, label }); };
+  /* language pairs: codes (EN > IT, IT<>EN) and names (from English into Italian and German) */
+  const pairs = [];
+  const codes = Object.keys(LANGS).join('|');
+  for (const m of T.matchAll(new RegExp('\\b(' + codes + ')\\s*(<>|>|›|→)\\s*(' + codes + ')\\b', 'g'))) { pairs.push(m[1] + (m[2] === '<>' ? '<>' : '>') + m[3]); mark(m, 'pair'); }
+  for (const m of T.matchAll(new RegExp('\\b(' + codes + ')\\s*>\\s*(' + codes + ')((?:\\s*(?:,|and|&)\\s*(?:' + codes + ')\\b(?!\\s*>))+)', 'g'))) {
+    for (const x of m[3].matchAll(new RegExp('\\b(' + codes + ')\\b', 'g'))) { const p = m[1] + '>' + x[1]; if (pairs.indexOf(p) < 0 && x[1] !== m[1]) pairs.push(p); }
+  }
+  if (!pairs.length) {
+    const names = Object.keys(LANG_WORDS).join('|');
+    const src = T.match(new RegExp('\\bfrom (' + names + ')\\b', 'i'));
+    if (src) {
+      mark(src, 'from');
+      const S = LANG_WORDS[src[1].toLowerCase()], after = T.slice(src.index), tail = after.match(new RegExp('\\b(?:into|to)\\s+(' + names + ')((?:\\s*(?:,|and|&)\\s*(?:' + names + '))*)', 'i'));
+      if (tail) {
+        mark(tail, 'into', src.index + tail.index);
+        [tail[1]].concat((tail[2].match(new RegExp(names, 'gi')) || [])).forEach(w => { const tg = LANG_WORDS[w.toLowerCase()], p = S + '>' + tg; if (tg !== S && pairs.indexOf(p) < 0) pairs.push(p); });
+      }
+    }
+  }
+  /* quantities */
+  const qn = s => parseInt(String(s).replace(/[.,\s]/g, ''), 10);
+  const mW = T.match(new RegExp(NUMRE + '\\s*words', 'i')); mark(mW, 'words');
+  const mR = T.match(new RegExp(NUMRE + '\\s*(?:repetitions|reps)', 'i')); mark(mR, 'repetitions');
+  const mM = T.match(/(\d+)\s*(?:minutes|mins?)\b/i); mark(mM, 'minutes');
+  const hrs = [...T.matchAll(/(\d+(?:\.\d+)?)\s*(?:hours|hrs?)\b/gi)];
+  /* service */
+  let svc = 'tep';
+  if (/post[\s-]?edit|\bMTPE\b|\bPEMT\b/i.test(T)) svc = 'mtpe';
+  else if (/revision only|proofreading only|review only/i.test(T)) svc = 'rev';
+  else if (/translation only|without revision/i.test(T)) svc = 'trad';
+  const mSvc = T.match(/post[\s-]?editing|\bMTPE\b|translation with revision|translation|subtitling|subtitles|transcription|interpreter|interpreting|layout|\bDTP\b/i); mark(mSvc, 'service');
+  /* delivery */
+  let days = NaN, mD;
+  if ((mD = T.match(/(\d+)\s*working days/i))) { days = +mD[1]; mark(mD, 'delivery'); }
+  else if ((mD = T.match(/by (\d{1,2})\/(\d{1,2})/i))) { const d = new Date(today().getFullYear(), +mD[2] - 1, +mD[1]); days = Math.max(0.5, workingDaysBetween(today(), d)); mark(mD, 'delivery'); }
+  else if ((mD = T.match(/\bby (monday|tuesday|wednesday|thursday|friday)\b/i))) {
+    const wd = WEEKDAYS[mD[1].toLowerCase()]; let d = addDays(today(), 1); while (d.getDay() !== wd) d = addDays(d, 1); days = Math.max(1, workingDaysBetween(today(), d)); mark(mD, 'delivery');
+  } else if ((mD = T.match(/same[- ]day|by end of today|by tonight/i))) { days = 0.5; mark(mD, 'delivery'); }
+  else if ((mD = T.match(/\btomorrow\b/i))) { days = 1; mark(mD, 'delivery'); }
+  const mU = T.match(/\burgent\w*|\basap\b|as soon as possible|quick price/i); mark(mU, 'urgency');
+  const cli = /\bagency\b|\bLSP\b/i.test(T) ? 'l' : 'd';
+  /* lines */
+  const lines = [], P0 = pairs.length ? pairs : ['EN>IT'];
+  const words = mW ? qn(mW[1]) : 0, reps = mR ? qn(mR[1]) : 0;
+  if (words) P0.forEach(p => lines.push({ svc, pair: p, qty: Math.max(0, words - reps), rep: reps, days }));
+  if (mM) { const s2 = /transcri/i.test(T) ? 'tra' : 'sub'; P0.forEach(p => lines.push({ svc: s2, pair: p, qty: +mM[1], rep: 0, days })); }
+  hrs.forEach(m => {
+    const ctx = T.slice(Math.max(0, m.index - 60), m.index + 40);
+    const s3 = /layout|DTP|InDesign|designer/i.test(ctx) ? 'dtp' : 'int';
+    lines.push({ svc: s3, pair: s3 === 'dtp' ? '' : P0[0], qty: numDec(m[1]), rep: 0, days }); mark(m, s3 === 'dtp' ? 'DTP hours' : 'hours');
+  });
+  return { lines, days, cli, urgent: !!mU, spans, pairs };
+}
+function highlight(text, spans) {
+  const ss = spans.slice().sort((a, b) => a.s - b.s), out = []; let pos = 0;
+  ss.forEach(sp => { if (sp.s < pos) return; out.push(esc(text.slice(pos, sp.s)), '<mark data-l="' + esc(sp.label) + '">' + esc(text.slice(sp.s, sp.e)) + '</mark>'); pos = sp.e; });
+  out.push(esc(text.slice(pos)));
+  return out.join('');
+}
+function quoteFromText(text, extra) {
+  const p = parseRequest(text), cli = (extra && extra.cli) || p.cli;
+  const rows = p.lines.map(l => priceLine(l, cli, p.urgent));
+  const ok = rows.filter(r => r.ok), total = ok.reduce((s, r) => s + r.total, 0), cost = ok.reduce((s, r) => s + r.costTot, 0);
+  return { parsed: p, rows, total, cost, mol: total ? (total - cost) / total : NaN };
+}
+
+/* ---------- Navigation (no page reloads) ---------- */
+let view = { name: 'dashboard', param: null };
+let area = (() => { try { return localStorage.getItem('focuspm.area') || ''; } catch (e) { return ''; } })();
+function go(name, param) {
+  view = { name: VIEWS[name] ? name : 'dashboard', param: param || null };
+  try { const h = '#/' + view.name + (param ? '/' + encodeURIComponent(param) : ''); if (location.hash !== h) history.pushState(null, '', h); } catch (e) {}
+  render(true);
+}
+function readHash() {
+  try { const m = location.hash.match(/^#\/([\w-]+)(?:\/(.+))?$/); if (m && VIEWS[m[1]]) view = { name: m[1], param: m[2] ? decodeURIComponent(m[2]) : null }; } catch (e) {}
+}
+const NAV = [['dashboard', 'Dashboard'], ['quotes', 'Quotes'], ['rates', 'Rate calculator'], ['tenders', 'Tender analyser'], ['vendors', 'Vendors'], ['tools', 'Tools']];
+function renderNav() {
+  const urg = state.requests.filter(r => r.section === 'urgent' && isOpen(r)).length;
+  const todo = state.requests.filter(r => r.quote && isOpen(r) && !state.quotes.some(q => q.reqId === r.id)).length;
+  const badge = { dashboard: urg, quotes: todo };
+  $('#navlinks').innerHTML = NAV.map(n => '<button type="button" class="navbtn" data-go="' + n[0] + '"' + (n[0] === view.name ? ' aria-current="page"' : '') + '>' + n[1] +
+    (badge[n[0]] ? '<span class="count" aria-label="' + badge[n[0]] + ' to handle">' + badge[n[0]] + '</span>' : '') + '</button>').join('');
+}
+function render(focus) {
+  const main = $('#main'), v = VIEWS[view.name] || VIEWS.dashboard;
+  main.innerHTML = v.html(view.param) + '<footer class="foot"><span>FOCUS PM · demo tool for the workshop. Emails, Teams chats, vendors, clients and tenders are fictional.</span><span>CMT S.r.l. | Communication Meets Translation</span></footer>';
+  if (v.mount) v.mount(view.param);
+  renderNav();
+  document.title = (v.title ? v.title + ' · ' : '') + 'FOCUS PM · CMT';
+  if (focus) { window.scrollTo(0, 0); const h = main.querySelector('h1'); if (h) h.focus({ preventScroll: true }); }
+}
+
+/* ---------- Views ---------- */
+function lastRead() { const n = new Date(), m = n.getHours() * 60 + n.getMinutes(), slots = [[7, 45], [12, 45], [16, 45]].filter(x => x[0] * 60 + x[1] <= m); const x = slots.pop(); return x ? 'at ' + pad(x[0]) + ':' + x[1] : 'yesterday at 16:45'; }
+const LIGHTS = [['red', 'To do'], ['amber', 'In progress'], ['green', 'Done']];
+let editing = null;
+function cardHTML(r) {
+  const st = statusOf(r), d = daysUntil(r.due), q = state.quotes.find(x => x.reqId === r.id), note = state.status[r.id] && state.status[r.id].note;
+  const ch = r.msg ? '<span class="tag">' + (r.msg.channel === 'teams' ? 'Teams' : 'Email') + '</span> ' : '';
+  return '<article class="card st-' + st + '">' +
+    '<h3>' + esc(r.title) + '</h3>' +
+    '<div class="due' + (d <= 1 && isOpen(r) ? ' hot' : '') + '"><b>by ' + esc(fmtShort(r.due)) + '</b><span>' + when(d) + '</span></div>' +
+    '<div class="meta">' + (area ? '' : '<span class="area">' + esc(r.area) + '</span>') + ch + esc(r.from) + ' · received ' + esc(fmtDate(r.received)) + '</div>' +
+    (r.why ? '<p class="why">' + esc(r.why) + '</p>' : '') +
+    (r.action && isOpen(r) ? '<div class="next">' + ICON.arrow + '<span>' + esc(r.action) + '</span></div>' : '') +
+    (editing === r.id ? '<div class="edit"><label class="sr" for="note-' + r.id + '">Note</label><textarea id="note-' + r.id + '" rows="3" placeholder="e.g. Handled like this… Still missing…">' + esc(note || '') + '</textarea><div class="row-actions" style="justify-content:flex-end"><button type="button" class="btn small" data-act="noteNo">Cancel</button><button type="button" class="btn small primary" data-act="noteOk" data-id="' + r.id + '">Save note</button></div></div>'
+      : note ? '<div class="note">' + esc(note) + '</div>' : '') +
+    '<div class="acts">' + LIGHTS.map(s => '<button type="button" class="sl ' + s[0] + '" data-act="light" data-id="' + r.id + '" data-st="' + s[0] + '" aria-pressed="' + (st === s[0]) + '"><i></i>' + s[1] + '</button>').join('') +
+    '<button type="button" class="sl" data-act="note" data-id="' + r.id + '">' + (note ? 'Edit note' : 'Add note') + '</button><span class="sp"></span>' +
+    (r.quote ? '<button type="button" class="btn small primary" data-act="quote" data-id="' + r.id + '">' + ICON.calc + (q ? 'Quote ' + fmtMoney(q.total) : 'Prepare quote') + '</button>' : '') +
+    (r.area === 'Tenders' ? '<button type="button" class="btn small primary" data-go="tenders">' + ICON.search + 'Analyse tender</button>' : '') +
+    '</div></article>';
+}
+const VIEWS = {
+  dashboard: {
+    title: 'Dashboard',
+    html() {
+      const all = state.requests, rows = area ? all.filter(r => r.area === area) : all;
+      const by = k => rows.filter(r => r.section === k && isOpen(r)).sort((a, b) => a.due.localeCompare(b.due));
+      const urg = by('urgent'), wk = by('week'), wait = by('waiting'), closed = rows.filter(r => !isOpen(r));
+      const toQuote = all.filter(r => r.quote && isOpen(r) && !state.quotes.some(q => q.reqId === r.id)).length;
+      const areas = [...new Set(all.map(r => r.area))];
+      const chip = (v, l) => '<button type="button" class="chip" data-act="area" data-area="' + esc(v) + '" aria-pressed="' + (area === v) + '">' + esc(l) + ' <small>' + all.filter(r => isOpen(r) && (!v || r.area === v)).length + '</small></button>';
+      const t = today(), days = [];
+      for (let i = 0; i < 7; i++) {
+        const k = iso(addDays(t, i)), dt = addDays(t, i);
+        const items = state.events.filter(e => e.day === k).sort((a, b) => a.time.localeCompare(b.time)).map(e => '<div class="it"><time>' + e.time + '</time>' + esc(e.title) + '</div>')
+          .concat(all.filter(r => r.due === k && isOpen(r) && r.section !== 'waiting').map(r => '<div class="it dead">Due: ' + esc(r.title) + '</div>'));
+        days.push('<div class="day' + (i === 0 ? ' today' : '') + '"><div class="dl"><b>' + dt.getDate() + '</b>' + (i === 0 ? 'today' : dt.toLocaleDateString('en-GB', { weekday: 'short' })) + '</div><div>' + (items.join('') || '<span class="hint">free</span>') + '</div></div>');
+      }
+      const valQ = state.quotes.reduce((s, q) => s + q.total, 0);
+      const h = new Date().getHours(), hello = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+      return '<header class="hero"><div><h1 tabindex="-1">' + hello + '</h1><p>' + fmtDate(t, true) + ' · email and Teams chats read ' + lastRead() + ' (simulated)</p></div>' +
+        '<div class="counts"><div><b>' + urg.length + '</b><span>Urgent</span></div><div><b>' + wk.length + '</b><span>This week</span></div><div><b>' + toQuote + '</b><span>Quotes to prepare</span></div></div></header>' +
+        '<nav class="filters" aria-label="Filter by area"><span class="lbl">Area</span>' + chip('', 'All') + areas.map(a => chip(a, a)).join('') +
+        '<div class="legend"><span><i style="background:var(--red)"></i>To do</span><span><i style="background:var(--amber)"></i>In progress</span><span><i style="background:var(--green)"></i>Done</span></div></nav>' +
+        '<div class="grid2"><div class="stack">' +
+        '<section><h2>Do now</h2><div class="list">' + (urg.map(cardHTML).join('') || '<p class="empty">Nothing urgent right now.</p>') + '</div></section>' +
+        '<section><h2>This week</h2><div class="list">' + (wk.map(cardHTML).join('') || '<p class="empty">Nothing pending.</p>') + '</div></section>' +
+        (closed.length ? '<details class="closed"><summary>Done (' + closed.length + ')</summary><div class="list">' + closed.map(cardHTML).join('') + '</div></details>' : '') +
+        '</div><aside class="side"><section><h2>The week</h2>' + days.join('') + '</section>' +
+        '<section><h2>Waiting for a reply</h2><div class="mini">' + (wait.map(r => '<div><b>' + esc(r.title) + '</b><p>' + esc(r.from) + (r.why ? ' · ' + esc(r.why) : '') + '</p></div>').join('') || '<p class="empty">Nothing pending.</p>') + '</div></section>' +
+        '<section><h2>Figures</h2><div class="figs"><div class="fig"><b>' + state.quotes.length + '</b><span>Saved quotes</span></div><div class="fig"><b>' + fmtMoney(valQ).replace(/\.00$/, '') + '</b><span>Value quoted</span></div></div></section></aside></div>';
+    }
+  },
+  quotes: {
+    title: 'Quotes',
+    html() {
+      const todo = state.requests.filter(r => r.quote && isOpen(r) && !state.quotes.some(q => q.reqId === r.id));
+      const st = [['sent', 'Sent'], ['won', 'Won'], ['lost', 'Lost']];
+      const rows = state.quotes.slice().reverse().map(q => '<tr><td><b>' + esc(q.title) + '</b><p class="sub">' + esc(q.client) + ' · ' + esc(fmtDate(q.date)) + '</p></td><td>' + q.lines.map(x => '<div>' + esc(x) + '</div>').join('') + '</td><td class="num"><b>' + fmtMoney(q.total) + '</b></td><td class="num"><span class="pill ' + (q.mol < state.params.molMin / 100 ? 'low' : 'ok') + '">' + fmtPct(q.mol) + '</span></td>' +
+        '<td><div class="seg" role="group" aria-label="Status">' + st.map(s => '<button type="button" data-act="qstatus" data-id="' + q.id + '" data-st="' + s[0] + '" aria-pressed="' + (q.status === s[0]) + '">' + s[1] + '</button>').join('') + '</div></td></tr>').join('');
+      const won = state.quotes.filter(q => q.status === 'won'), decided = state.quotes.filter(q => q.status !== 'sent');
+      return '<header class="head"><div><h1 tabindex="-1">Quotes</h1><p class="sub">Requests received by email and Teams, priced with the CMT pricing scheme.</p></div><button type="button" class="btn primary" data-act="quoteFree">' + ICON.calc + 'Quote from a text</button></header>' +
+        '<div class="grid2 pv"><div class="stack"><section class="panel flush"><div class="scroll"><table class="table"><thead><tr><th>Request</th><th>Lines</th><th class="num">Total</th><th class="num">Margin</th><th>Status</th></tr></thead><tbody>' +
+        (rows || '<tr><td colspan="5" class="empty" style="padding:20px">No saved quotes yet. Open a request from the dashboard and press Prepare quote.</td></tr>') + '</tbody></table></div></section></div>' +
+        '<aside class="side"><section><h2>To prepare</h2><div class="list">' + (todo.map(r => '<div class="card st-red" style="grid-template-columns:1fr"><h3>' + esc(r.title) + '</h3><div class="meta">' + esc(r.from) + '</div><div class="acts"><button type="button" class="btn small primary" data-act="quote" data-id="' + r.id + '">' + ICON.calc + 'Prepare quote</button></div></div>').join('') || '<p class="empty">Every request has a quote.</p>') + '</div></section>' +
+        '<section><h2>Results</h2><div class="figs"><div class="fig"><b>' + (decided.length ? fmtPct(won.length / decided.length) : '–') + '</b><span>Win rate</span></div><div class="fig"><b>' + fmtMoney(won.reduce((s, q) => s + q.total, 0)) + '</b><span>Value won</span></div></div></section></aside></div>';
+    }
+  },
+  rates: { title: 'Rate calculator', html: () => ratesHTML(), mount: () => ratesMount() },
+  tenders: { title: 'Tender analyser', html: p => tendersHTML(p), mount: p => tendersMount(p) },
+  vendors: {
+    title: 'Vendors',
+    html() {
+      const k = { trad: 'Trans.', rev: 'Rev.', pe: 'PE', sub: 'Subt./min', tra: 'Transcr./min', int: 'Interp./h', dtp: 'DTP/h' };
+      const rows = state.vendors.map(v => '<tr><td><b>' + esc(v.name) + '</b><p class="sub">' + esc(v.city) + ' · ' + esc(v.email) + '</p></td><td>' + v.pairs.map(p => '<span class="pair">' + esc(pairLabel(p)) + '</span>').join('<br>') + '</td>' +
+        Object.keys(k).map(x => '<td class="num">' + (v.rates[x] ? (x === 'trad' || x === 'rev' || x === 'pe' ? fmtRate(v.rates[x]) : fmtMoney(v.rates[x])) : '<span class="hint">–</span>') + '</td>').join('') + '</tr>').join('');
+      return '<header class="head"><div><h1 tabindex="-1">Vendors</h1><p class="sub">Resource costs used by the pricing engine. A quote always takes the highest cost among the vendors for that pair.</p></div></header>' +
+        '<section class="panel flush"><div class="scroll"><table class="table"><thead><tr><th>Vendor</th><th>Pairs</th>' + Object.values(k).map(x => '<th class="num">' + x + '</th>').join('') + '</tr></thead><tbody>' + rows + '</tbody></table></div></section>';
+    }
+  },
+  tools: {
+    title: 'Tools',
+    html() { return '<header class="head"><div><h1 tabindex="-1">Tools</h1><p class="sub">Helpers that work with requests, quotes and vendors. Each empty slot is a feature you can add by describing it to Claude.</p></div></header><div class="tools" id="tool-list"></div><h2 style="margin-top:32px">Ideas to add</h2><div class="slots" id="tool-slots"></div>'; },
+    mount() { mountTools(); }
+  }
+};
+
+/* =====================================================================
+   QUOTE WINDOW: reads the email or Teams message by itself
+   ===================================================================== */
+let QM = null; /* { req, text, parsed, lines, cli, urgent } */
+function openQuote(arg) {
+  const r = typeof arg === 'string' ? findReq(arg) : null;
+  const text = r && r.msg ? r.msg.body : (typeof arg === 'string' && !r ? arg : '');
+  QM = { req: r, text };
+  const d = $('#qm'), m = r && r.msg;
+  d.innerHTML = '<div class="qm-head"><div><h2 id="qm-title">Quote' + (r ? ' · ' + esc(r.title) : '') + '</h2><p class="sub">' + (r ? esc(r.from) : 'Paste an email or a Teams message') + '</p></div>' +
+    '<button type="button" class="qm-x" data-act="qmClose" aria-label="Close quote">' + ICON.x + '</button></div>' +
+    '<div class="qm-body"><div class="qm-col"><h2>Original message</h2>' +
+    (m ? '<div class="msg"><div class="msg-h"><span class="src">' + (m.channel === 'teams' ? ICON.chat + 'Teams' : ICON.mail + 'Email') + '</span><b>' + esc(m.subject) + '</b><span class="sub">From: ' + esc(m.from) + '</span></div><div class="msg-b" id="qm-msg">' + esc(m.body) + '</div></div>'
+      : '<div class="field"><label for="qm-free">Request text</label><textarea id="qm-free" rows="9" placeholder="e.g. Hi, we need 2,500 words EN > IT with revision within 3 working days…">' + esc(text) + '</textarea></div><div class="row-actions" style="margin-top:8px"><button type="button" class="btn primary" data-act="qmParse">Read text</button><button type="button" class="btn" data-act="qmSample">Example</button></div><div class="msg" style="margin-top:14px" hidden id="qm-msgbox"><div class="msg-b" id="qm-msg"></div></div>') +
+    '<div class="scan" id="qm-scan" aria-live="polite"></div>' +
+    '</div><div class="qm-col" id="qm-calc"><p class="empty">' + (m ? 'Reading the message…' : 'Paste a text and press Read text.') + '</p></div></div>' +
+    '<div class="qm-foot"><button type="button" class="btn" data-act="qmClose">Close</button><button type="button" class="btn" data-act="qmCopy" id="qm-copy" disabled>Copy reply</button><button type="button" class="btn primary" data-act="qmSave" id="qm-save" disabled>Save quote</button></div>';
+  try { d.showModal(); } catch (e) { d.setAttribute('open', ''); }
+  if (m) runScan(m.body);
+  else if (text) runScan(text);
+  else setTimeout(() => { const f = $('#qm-free'); if (f) f.focus(); }, 30);
+}
+function closeQuote() { const d = $('#qm'); try { d.close(); } catch (e) { d.removeAttribute('open'); } QM = null; }
+function runScan(text) {
+  QM.text = text;
+  const p = parseRequest(text);
+  QM.parsed = p; QM.lines = p.lines.map(l => Object.assign({ urg: 'auto' }, l)); QM.cli = p.cli; QM.urgent = p.urgent;
+  const box = $('#qm-msg'); box.innerHTML = highlight(text, p.spans);
+  const mb = $('#qm-msgbox'); if (mb) mb.hidden = false;
+  const steps = ['Reading the message', 'Finding language pairs, volumes and delivery', 'Looking up vendor costs', 'Applying the CMT pricing scheme'];
+  const scan = $('#qm-scan'); scan.innerHTML = steps.map(s => '<div><i></i>' + s + '</div>').join('');
+  const marks = [...box.querySelectorAll('mark')], rows = [...scan.children];
+  let reduce = false; try { reduce = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
+  const dt = reduce ? 0 : 380;
+  rows.forEach((r, i) => {
+    setTimeout(() => { if (!QM) return; r.className = 'run'; if (i > 0) rows[i - 1].className = 'done'; if (i === 1) marks.forEach((mk, j) => setTimeout(() => mk.classList.add('on'), reduce ? 0 : j * 120)); }, i * dt);
+  });
+  setTimeout(() => { if (!QM) return; rows.forEach(r => r.className = 'done'); renderQuoteCalc(true); }, steps.length * dt + (reduce ? 0 : 200));
+}
+function renderQuoteCalc(anim) {
+  const host = $('#qm-calc'); if (!host || !QM) return;
+  const P = state.params, res = QM.lines.map(l => priceLine(l, QM.cli, QM.urgent)), ok = res.filter(r => r.ok);
+  const total = ok.reduce((s, r) => s + r.total, 0), cost = ok.reduce((s, r) => s + r.costTot, 0), mol = total ? (total - cost) / total : NaN, molMin = P.molMin / 100;
+  const pairs = [...new Set(QM.lines.map(l => l.pair).filter(Boolean))], d = QM.lines[0] && QM.lines[0].days;
+  const chip = (l, v) => '<div class="fig" style="border:1px solid var(--rule);border-radius:6px;padding:8px 10px"><span>' + l + '</span><b style="font-size:var(--t-md)">' + v + '</b></div>';
+  const svcOpts = Object.keys(SERVICES).map(k => [k, SERVICES[k].label]);
+  const rowsHTML = res.map((r, i) => {
+    const l = r.line, u = SERVICES[l.svc].unit;
+    return '<tr><td style="min-width:170px"><select data-ql="' + i + '" data-k="svc" aria-label="Service">' + options(svcOpts, l.svc) + '</select>' +
+      (l.svc !== 'dtp' ? '<input data-ql="' + i + '" data-k="pair" value="' + esc(pairText(l.pair)) + '" aria-label="Language pair" style="margin-top:4px">' : '') +
+      (r.ok ? '<div class="how">' + esc(r.base.how) + (r.u.pct ? ' · ' + r.u.label.toLowerCase() + ' +' + r.u.pct + '%' : '') + (r.base.demo ? ' · <b>demo rule</b>' : '') + '</div>' : '<div class="how" style="color:var(--bordeaux)">' + esc(r.why) + '</div>') + '</td>' +
+      '<td style="width:110px"><input data-ql="' + i + '" data-k="qty" inputmode="decimal" value="' + (l.qty || '') + '" aria-label="Quantity in ' + u + '"><div class="how">' + u + (u === 'words' && l.rep ? ' + ' + fmtNum(l.rep) + ' reps at ' + P.repP + '%' : '') + '</div></td>' +
+      '<td class="num">' + (r.ok ? '<b>' + (u === 'words' ? fmtRate(r.unit) : fmtMoney(r.unit)) + '</b><div class="how">per ' + UNIT_ONE[u] + '</div>' : '–') + '</td>' +
+      '<td class="num">' + (r.ok ? '<b>' + fmtMoney(r.total) + '</b>' : '–') + '</td>' +
+      '<td class="num">' + (r.ok ? '<span class="pill ' + (r.mol < molMin ? 'low' : 'ok') + '">' + fmtPct(r.mol) + '</span>' : '') + '</td>' +
+      '<td><button type="button" class="btn small" data-act="qlDel" data-i="' + i + '" aria-label="Remove line">' + ICON.x + '</button></td></tr>';
+  }).join('');
+  const urgs = [...new Set(ok.map(r => r.u.label))];
+  const lowMol = ok.filter(r => r.mol < molMin);
+  host.innerHTML = '<div class="' + (anim ? 'fade-in' : '') + '"><h2>Extracted data</h2><div class="extract">' +
+    chip('Language pairs', pairs.length ? pairs.map(pairLabel).join(', ') : '–') + chip('Volume', QM.lines.map(l => fmtNum(l.qty) + ' ' + SERVICES[l.svc].unit).join(' · ') || '–') +
+    chip('Delivery', d > 0 ? (d < 1 ? 'same day' : d + ' working days') : 'not stated') + chip('Urgency', urgs.join(', ') || '–') +
+    '<div class="field"><label for="qm-cli">Client type</label><select id="qm-cli">' + options([['d', 'Direct client'], ['l', 'Agency (LSP)']], QM.cli) + '</select></div>' +
+    '<div class="field"><label for="qm-days">Working days</label><input id="qm-days" inputmode="decimal" value="' + (d > 0 ? d : '') + '" placeholder="e.g. 3"></div></div>' +
+    '<h2>Calculation</h2><div class="scroll"><table class="qlines"><thead><tr><th>Service</th><th>Quantity</th><th class="num">Price</th><th class="num">Total</th><th class="num">Margin</th><th><span class="sr">Actions</span></th></tr></thead><tbody>' + (rowsHTML || '<tr><td colspan="6" class="empty">No lines found. Add one.</td></tr>') + '</tbody></table></div>' +
+    '<div class="row-actions" style="margin-top:8px"><button type="button" class="btn small" data-act="qlAdd">+ Line</button></div>' +
+    '<div class="qtot"><div><div class="lbl">Quote total (excl. VAT)</div><div class="big">' + fmtMoney(total) + '</div></div><div><div class="lbl">Margin</div><span class="pill ' + (mol < molMin ? 'low' : 'ok') + '" style="font-size:15px">' + fmtPct(mol) + '</span><div class="hint">resource cost ' + fmtMoney(cost) + '</div></div>' +
+    '<div><div class="lbl">Floor</div><div class="hint">margin ' + fmtPct(molMin) + '<br>= 35% markup</div></div></div>' +
+    (lowMol.length ? '<div class="warnbox bad">Margin below the floor on ' + lowMol.length + ' line(s): pick cheaper resources rather than raising the price.</div>' : '') +
+    (ok.some(r => r.base.demo) ? '<div class="warnbox">Minutes and interpreting hours use a demo rule (vendor cost × markup): tune it to the real price list.</div>' : '') +
+    '<h2 style="margin-top:18px">Draft reply</h2>' +
+    '<label class="sr" for="qm-reply">Draft reply</label><textarea id="qm-reply" class="reply">' + esc(replyText(res, total)) + '</textarea></div>';
+  QM.res = res; QM.total = total; QM.cost = cost; QM.mol = mol;
+  $('#qm-copy').disabled = !ok.length; $('#qm-save').disabled = !ok.length;
+  host.querySelectorAll('[data-ql]').forEach(inp => inp.addEventListener('change', () => {
+    const l = QM.lines[+inp.dataset.ql], k = inp.dataset.k;
+    if (k === 'qty') l.qty = numDec(inp.value) || 0; else if (k === 'pair') l.pair = String(inp.value).toUpperCase().replace(/\s/g, '').replace('›', '>'); else if (k === 'svc') { l.svc = inp.value; if (inp.value === 'dtp') l.pair = ''; else if (!l.pair) l.pair = pairs[0] || 'EN>IT'; }
+    renderQuoteCalc(false);
+  }));
+  $('#qm-cli').addEventListener('change', e => { QM.cli = e.target.value; renderQuoteCalc(false); });
+  $('#qm-days').addEventListener('change', e => { const v = numDec(e.target.value); QM.lines.forEach(l => l.days = v > 0 ? v : NaN); renderQuoteCalc(false); });
+}
+function replyText(res, total) {
+  const ok = res.filter(r => r.ok), P = state.params;
+  const name = QM.req && QM.req.msg && QM.req.msg.channel === 'email' ? QM.req.msg.from.split(/[·<]/)[0].trim().split(' ')[0] : '';
+  const lines = ok.map(r => {
+    const u = SERVICES[r.line.svc].unit, pr = (u === 'words' ? fmtRate(r.unit) : fmtMoney(r.unit)) + ' per ' + UNIT_ONE[u];
+    const pair = r.line.pair ? ' ' + pairText(r.line.pair) : '';
+    return '• ' + SERVICES[r.line.svc].label + pair + ': ' + fmtNum(r.line.qty) + ' ' + u + (r.line.rep ? ' + ' + fmtNum(r.line.rep) + ' repetitions at ' + P.repP + '%' : '') + ', ' + pr + ' = ' + fmtMoney(r.total);
+  }).join('\n');
+  const urg = ok.find(r => r.u.pct), d = ok[0] && ok[0].line.days;
+  return 'Dear ' + (name || 'colleague') + ',\n\nthank you for your request. Please find our quote below:\n\n' + lines + '\n\nTotal: ' + fmtMoney(total) + ' (VAT excluded).' + (urg ? '\nThe price includes a ' + urg.u.pct + '% surcharge for the requested turnaround.' : '') + (d > 0 ? '\nDelivery: ' + (d < 1 ? 'same day' : 'within ' + d + ' working days of your confirmation') + '.' : '') + '\n\nThis quote is valid for 30 days. We look forward to your confirmation.\n\nKind regards,\nCMT Translations · Project Management';
+}
+function saveQuote() {
+  if (!QM || !QM.res) return;
+  const ok = QM.res.filter(r => r.ok), r = QM.req;
+  const q = { id: 'q' + Date.now(), reqId: r ? r.id : null, title: r ? r.title : 'Quote from a text', client: r ? r.from : '–', date: iso(today()), total: QM.total, mol: QM.mol, status: 'sent',
+    lines: ok.map(x => SERVICES[x.line.svc].label + (x.line.pair ? ' ' + pairText(x.line.pair) : '') + ': ' + fmtMoney(x.total)) };
+  state.quotes = state.quotes.filter(x => !(r && x.reqId === r.id)).concat(q);
+  if (r) state.status[r.id] = Object.assign({}, state.status[r.id], { light: 'amber', note: 'Quote ' + fmtMoney(q.total) + ' (margin ' + fmtPct(q.mol) + ') ready to send.', at: Date.now() });
+  closeQuote(); changed();
+  toast('Quote saved: ' + fmtMoney(q.total), { action: { label: 'View quotes', run: () => go('quotes') } });
+}
+
+/* =====================================================================
+   RATE CALCULATOR (resource costs → client price, margin, market cap)
+   ===================================================================== */
+const RATES_SAMPLE = 'hi, about yesterday\'s request, I checked with the resources. These are the costs:\nEN > IT: translation 0.06-0.08 revision 0.02-0.025\nDE > IT: translation 0.075-0.09 revision 0.025-0.03 PE 0.045\nIT > JA: translation 0.10-0.12 revision 0.035\nthe client also asks for rush and DTP rates. thanks!';
+let TF = null;
+function parseCosts(text) {
+  const codes = Object.keys(LANGS).join('|'), out = [];
+  const ms = [...String(text).matchAll(new RegExp('\\b(' + codes + ')\\s*(?:>|-|›|→)\\s*(' + codes + ')\\b', 'g'))];
+  ms.forEach((m, i) => {
+    const seg = text.slice(m.index + m[0].length, i + 1 < ms.length ? ms[i + 1].index : text.length).split(/\n/)[0];
+    const p = { pair: m[1] + '>' + m[2], tMin: NaN, tMax: NaN, rMin: NaN, rMax: NaN, pMin: NaN, pMax: NaN, mkt: NaN };
+    for (const r of seg.matchAll(/\b(trans\w*|tr|rev\w*|pe|mtpe|post[\w-]*)\b[^\d\n]{0,12}?(\d+\.\d+)(?:\s*[-–\/]\s*(\d+\.\d+))?/gi)) {
+      const k = /^t/i.test(r[1]) ? 't' : /^r/i.test(r[1]) ? 'r' : 'p', a = numDec(r[2]), b = r[3] ? numDec(r[3]) : a;
+      p[k + 'Min'] = Math.min(a, b); p[k + 'Max'] = Math.max(a, b);
+    }
+    out.push(p);
+  });
+  return out;
+}
+function rateRows(p) {
+  const P = state.params, has = x => isFinite(x) && x > 0;
+  const C = {}; if (has(p.tMax)) C.trad = p.tMax; if (has(p.rMax)) C.rev = p.rMax; if (has(p.pMax)) C.pe = p.pMax;
+  const rows = [];
+  const push = (id, name, u, costMin) => { if (!u) return; rows.push({ id, name, price: u.price, cost: u.cost, how: u.how, mol: (u.price - u.cost) / u.price, molB: (u.price - (costMin != null ? costMin : u.cost)) / u.price }); };
+  const tep = has(p.tMax) && has(p.rMax) ? unitPrice('tep', p.pair, C) : null;
+  if (tep) {
+    const mkt = has(p.mkt) ? p.mkt : 0;
+    if (mkt) rows.push({ id: 'mkt', name: 'TEP at the market cap', price: mkt, cost: tep.cost, how: 'current price entered by hand', mol: (mkt - tep.cost) / mkt, molB: (mkt - (p.tMin + (p.rMin || p.rMax))) / mkt });
+    push('tep', 'Translation + revision (TEP)', tep, (p.tMin || p.tMax) + (p.rMin || p.rMax));
+    push('trad', 'Translation only', unitPrice('trad', p.pair, C), p.tMin || p.tMax);
+    const base = mkt || tep.price;
+    [['rush', P.rush, 'TEP rush'], ['srush', P.srush, 'TEP super rush']].forEach(([id, pct, nm]) => { const price = up(base * (1 + pct / 100), P.step); rows.push({ id, name: nm + ' (+' + pct + '%)', price, cost: tep.cost, how: fmtRate(base) + ' × ' + (1 + pct / 100).toFixed(2), mol: (price - tep.cost) / price }); });
+  }
+  if (has(p.pMax) && has(p.rMax)) push('mtpe', 'MT post-editing + revision', unitPrice('mtpe', p.pair, C), (p.pMin || p.pMax) + (p.rMin || p.rMax));
+  if (has(p.rMax)) push('rev', 'Revision only', unitPrice('rev', p.pair, C), p.rMin || p.rMax);
+  return { rows, tep };
+}
+function ratesHTML() {
+  return '<header class="head"><div><h1 tabindex="-1">Rate calculator</h1><p class="sub">From resource costs to client price, with margin and market cap. Paste a colleague\'s Teams message with the language pairs and costs.</p></div></header>' +
+    '<div class="tf-grid"><aside class="stack"><section class="panel"><h2>Request</h2><label class="sr" for="tf-src">Message with costs</label><textarea id="tf-src" rows="9" placeholder="Paste the Teams message with language pairs and costs here…"></textarea>' +
+    '<div class="row-actions" style="margin-top:8px"><button type="button" class="btn primary" data-act="tfCalc">Calculate</button><button type="button" class="btn" data-act="tfSample">Example</button><button type="button" class="btn" data-act="tfAdd">+ Pair</button></div></section>' +
+    '<section class="panel"><h2>Pricing parameters</h2><div class="params">' +
+    [['mk', 'TEP markup %'], ['mkRare', 'Rare language markup %'], ['mkPe', 'PE / revision markup %'], ['rush', 'Rush %'], ['srush', 'Super rush %'], ['molMin', 'Margin floor %'], ['revH', 'Revision €/h'], ['revProd', 'Revision words/h'], ['repP', 'Repetitions charged %'], ['dtpP', 'DTP €/h to client']]
+      .map(x => '<div class="field"><label for="pa-' + x[0] + '">' + x[1] + '</label><input id="pa-' + x[0] + '" data-pa="' + x[0] + '" inputmode="decimal" value="' + state.params[x[0]] + '"></div>').join('') +
+    '</div><p class="hint" style="margin-top:10px">These parameters also apply to the quote window and the tender analyser. Reference cost = max translation + max revision; rounded up to 0.005.</p>' +
+    '<div class="row-actions" style="margin-top:8px"><button type="button" class="btn small" data-act="paReset">Default values</button></div></section></aside>' +
+    '<div id="tf-out"></div></div>';
+}
+function ratesMount() {
+  if (!TF) { TF = parseCosts(RATES_SAMPLE); TF.src = RATES_SAMPLE; }
+  const src = $('#tf-src'); if (!src.value && TF.src) src.value = TF.src;
+  document.querySelectorAll('[data-pa]').forEach(inp => inp.addEventListener('change', () => { const v = numDec(inp.value); if (isFinite(v)) { state.params[inp.dataset.pa] = v; save(); renderRates(); toast('Parameter updated'); } }));
+  renderRates();
+}
+function renderRates() {
+  const out = $('#tf-out'); if (!out) return;
+  const P = state.params, molMin = P.molMin / 100, f = x => isFinite(x) ? String(x) : '';
+  if (!TF.length) { out.innerHTML = '<div class="panel empty">Paste a message and press Calculate, or load the example.</div>'; return; }
+  out.innerHTML = TF.map((p, i) => {
+    const { rows, tep } = rateRows(p), mk = 1 + markupFor(p.pair, 'tep') / 100;
+    const inp = k => '<input data-tf="' + i + '" data-k="' + k + '" inputmode="decimal" value="' + f(p[k]) + '" aria-label="' + k + '">';
+    let capHTML = '';
+    if (tep) {
+      const ref = isFinite(p.mkt) && p.mkt > 0 ? p.mkt : tep.price, rMax = p.rMax;
+      const full = Math.floor((ref / mk - rMax) * 1000 + 1e-9) / 1000, lim = Math.floor((ref * (1 - molMin) - rMax) * 1000 + 1e-9) / 1000;
+      const fit = p.tMax <= full + 1e-9 ? 'All the resources listed fit the range.' : (p.tMin || p.tMax) <= full + 1e-9 ? 'Use only translators up to ' + fmtRate(full) + '.' : (p.tMin || p.tMax) <= lim + 1e-9 ? 'No resource in range: the cheapest one is only acceptable.' : 'No acceptable resource: find others.';
+      capHTML = '<div class="cap"><div>Recommended translator cost up to <b>' + fmtRate(full) + '</b> (full markup)</div><div>Acceptable up to <b>' + fmtRate(lim) + '</b> (margin floor)</div><div><b>' + fit + '</b></div></div>';
+    }
+    return '<article class="tcard"><div class="tcard-h"><span class="pair">' + esc(pairLabel(p.pair)) + '</span><div class="row-actions">' + (RARE.indexOf(p.pair.split('>')[1]) >= 0 ? '<span class="tag b">rare language · ' + P.mkRare + '% markup</span>' : '') + '<button type="button" class="btn small" data-act="tfDel" data-i="' + i + '">Remove</button></div></div>' +
+      '<div class="tcard-b"><div><div class="costs"><span></span><b>min</b><b>max</b><span>Translation</span>' + inp('tMin') + inp('tMax') + '<span>Revision</span>' + inp('rMin') + inp('rMax') + '<span>PE / MTPE</span>' + inp('pMin') + inp('pMax') + '</div>' +
+      '<div class="field" style="margin-top:12px"><label>Current price (TEP cap)</label>' + inp('mkt') + '<span class="hint">If this pair already has a price, we do not go above it.</span></div>' + capHTML + '</div>' +
+      '<div class="scroll"><table class="table"><thead><tr><th>Service</th><th class="num">Cost</th><th class="num">Price</th><th class="num">Margin</th></tr></thead><tbody>' +
+      (rows.map(r => '<tr><td><b>' + esc(r.name) + '</b><p class="sub">' + esc(r.how) + '</p></td><td class="num">' + fmtRate(r.cost) + '</td><td class="num"><b style="color:var(--bordeaux)">' + fmtRate(r.price) + '</b></td><td class="num"><span class="pill ' + (r.mol < molMin ? 'low' : 'ok') + '">' + fmtPct(r.mol) + '</span>' + (r.molB != null && Math.abs(r.molB - r.mol) > 1e-6 ? '<p class="sub">min ' + fmtPct(r.molB) + '</p>' : '') + '</td></tr>').join('') || '<tr><td colspan="4" class="empty">Enter at least a translation and a revision cost.</td></tr>') +
+      '</tbody></table></div></div></article>';
+  }).join('');
+  out.querySelectorAll('[data-tf]').forEach(inp => inp.addEventListener('change', () => { TF[+inp.dataset.tf][inp.dataset.k] = numDec(inp.value); renderRates(); }));
+}
+
+/* =====================================================================
+   TENDER ANALYSER · simulated SharePoint ("Tenders" folder)
+   ===================================================================== */
+const PROFILE = { name: 'Demo company profile', iso17100: true, iso9001: true, iso18587: false, specificTurnover: 420000, totalTurnover: 1350000, liability: 2000000, interpreters: 2 };
+const TENDERS = [
+  { id: 'chs', file: 'Tender_CHA_translation_2027-2028.pdf', size: '1.8 MB', mod: -1, body: 'Collinare Health Authority', title: 'Translation of healthcare and administrative documents 2027-2028',
+    base: 260000, length: '24 months', criteria: { tech: 70, price: 30 }, due: 19, qa: 9, pub: -1, start: 45,
+    volumes: [['IT>EN', 520000], ['IT>DE', 260000], ['IT>FR', 230000], ['IT>ES', 180000], ['IT>AR', 120000], ['IT>ZH', 90000]],
+    req: [['UNI EN ISO 17100 certification', 'iso17100', 'ISO 17100'], ['ISO 9001 certification', 'iso9001', 'ISO 9001'], ['Specific turnover over three years ≥ €300,000', () => PROFILE.specificTurnover >= 300000, '300,000'], ['Professional liability insurance ≥ €1,000,000', () => PROFILE.liability >= 1000000, 'liability insurance'], ['Native translators with 5 years of medical experience', () => 'p', 'five years'], ['Urgent delivery: 2,000 words within 24 hours', () => 'p', '24 hours']],
+    risks: ['Penalty of 0.1% of the contract value for each day of delay', 'Estimated volumes are not binding: they may drop by up to 20%', 'Bid bond of 2% (€5,200)'],
+    text: 'TENDER SPECIFICATIONS\nOpen procedure for the award of the translation service for healthcare and administrative documents, 2027-2028.\n\nArt. 3 – Base amount\nThe total base amount is €260,000.00 excluding VAT, for a term of 24 months.\n\nArt. 5 – Eligibility requirements\na) a valid UNI EN ISO 17100 certification;\nb) an ISO 9001 certification;\nc) specific turnover for translation services over the last three years of no less than €300,000.00;\nd) professional liability insurance with cover of no less than €1,000,000.00;\ne) native translators with at least five years of documented experience in the medical and scientific field.\n\nArt. 6 – Estimated volumes\nAbout 1,400,000 words in total: English 520,000, German 260,000, French 230,000, Spanish 180,000, Arabic 120,000, Chinese 90,000. Volumes are not binding and may drop by up to 20%.\n\nArt. 8 – Turnaround\nStandard: 3,000 words every 2 working days. Urgent: 2,000 words within 24 hours.\n\nArt. 10 – Award criteria\nMost economically advantageous tender: technical offer 70 points, price 30 points.\n\nArt. 12 – Penalties\nFor each day of delay a penalty of 0.1% of the contract value applies.\n\nArt. 14 – Guarantees\nBid bond equal to 2% of the base amount.\n\nDeadline for clarification questions: 10 days before the bid deadline. Bids are due at 12:00 on the date shown on the platform.' },
+  { id: 'roc', file: 'Notice_Roccafiorita_interpreting.pdf', size: '640 KB', mod: -3, body: 'Municipality of Roccafiorita', title: 'Interpreting and translation for the 2027 twinning events',
+    base: 22500, length: '12 months', criteria: { tech: 60, price: 40 }, due: 11, qa: 5, pub: -3, start: 30,
+    volumes: [['IT>EN', 40000], ['IT>DE', 25000], ['IT>FR', 15000]], hours: 120,
+    req: [['At least 3 interpreters registered with a professional association', () => PROFILE.interpreters >= 3 || 'p', 'professional association'], ['Total turnover over three years ≥ €100,000', () => PROFILE.totalTurnover >= 100000, '100,000'], ['Mandatory site visit to the council chamber', () => 'p', 'Mandatory site visit'], ['ISO 9001 certification', 'iso9001', 'ISO 9001']],
+    risks: ['Mandatory site visit within 5 days: plan it now', 'Only 2 interpreters on file: a third profile or a joint bid is needed', 'Payment at 60 days'],
+    text: 'PUBLIC NOTICE\nAward of the interpreting and translation service for the 2027 twinning events.\n\n1. Contract value: €22,500.00 excluding VAT, term 12 months.\n2. Services: about 120 hours of consecutive and whispered interpreting; translation of about 80,000 words (English 40,000, German 25,000, French 15,000).\n3. Requirements: at least 3 interpreters registered with a professional association; total turnover over the last three years of no less than €100,000.00; ISO 9001 certification.\n4. Mandatory site visit to the council chamber by the fifth day after publication.\n5. Criteria: technical offer 60 points, price 40 points.\n6. Payment at 60 days from invoice.' },
+  { id: 'nar', file: 'Tender_NAMR_portal_localisation.pdf', size: '2.3 MB', mod: -6, body: 'National Agency for Minor Railways', title: 'Localisation of the passenger portal and app into 6 languages with post-editing',
+    base: 260000, length: '36 months', criteria: { tech: 80, price: 20 }, due: 7, qa: 2, pub: -6, start: 60,
+    volumes: [['IT>EN', 600000], ['IT>DE', 300000], ['IT>FR', 300000], ['IT>ES', 250000], ['IT>ZH', 150000], ['IT>JA', 150000]], mt: true,
+    req: [['ISO 18587 certification (post-editing)', 'iso18587', 'ISO 18587'], ['UNI EN ISO 17100 certification', 'iso17100', 'ISO 17100'], ['Specific turnover over three years ≥ €2,000,000', () => PROFILE.specificTurnover >= 2000000, '2,000,000'], ['TMS platform with REST API and SSO', () => 'p', 'REST API']],
+    risks: ['ISO 18587 requirement not met: straight exclusion', 'Required turnover is almost 5 times the one available', 'Close deadline: 7 days'],
+    text: 'CALL FOR TENDERS\nLocalisation of the web portal and passenger app, with post-editing of machine translation.\n\nAmount: €260,000.00 excluding VAT, term 36 months.\nEstimated volumes: 1,750,000 words (English 600,000, German 300,000, French 300,000, Spanish 250,000, Chinese 150,000, Japanese 150,000).\n\nEligibility requirements, on pain of exclusion:\n– ISO 18587 certification for post-editing;\n– UNI EN ISO 17100 certification;\n– specific turnover over the last three years of no less than €2,000,000.00;\n– TMS platform with REST API and SSO access.\n\nCriteria: technical offer 80 points, price 20 points. Joint bids by temporary groupings of companies are allowed.' }
+];
+function analyzeTender(t) {
+  const P = state.params, molMin = P.molMin / 100;
+  const req = t.req.map(r => { const v = typeof r[1] === 'string' ? PROFILE[r[1]] : r[1](); return { label: r[0], v: v === true ? 'y' : v === 'p' ? 'p' : 'n', cite: r[2] }; });
+  const svc = t.mt ? 'mtpe' : 'tep';
+  const lines = t.volumes.map(([pair, w]) => ({ pair, w, u: unitPrice(svc, pair) }));
+  let price = lines.reduce((s, l) => s + (l.u ? l.u.price * l.w : 0), 0), cost = lines.reduce((s, l) => s + (l.u ? l.u.cost * l.w : 0), 0);
+  if (t.hours) { const ip = unitPrice('int', 'IT<>EN'); if (ip) { price += ip.price * t.hours; cost += ip.cost * t.hours; } }
+  const floor = cost / (1 - molMin), maxCut = Math.max(0, 1 - floor / t.base);
+  const no = req.filter(r => r.v === 'n').length, part = req.filter(r => r.v === 'p').length;
+  let score = 100 - part * 8 - (t.due < 10 ? 8 : 0) - (t.qa <= 5 ? 8 : 0) - (maxCut < 0.05 ? 25 : maxCut < 0.12 ? 10 : 0) + (t.criteria.tech >= 70 ? 4 : 0);
+  if (no) score = Math.min(score, 38 - (no - 1) * 6);
+  score = Math.max(5, Math.min(97, Math.round(score)));
+  const verdict = score >= 70 ? ['go', 'BID'] : score >= 50 ? ['maybe', 'CONSIDER'] : ['no', 'DO NOT BID'];
+  return { missing: lines.filter(l => !l.u).length, req, lines, price, cost, floor, maxCut, score, verdict, totalW: t.volumes.reduce((s, v) => s + v[1], 0) };
+}
+let BSEL = null;
+function tendersHTML(p) {
+  BSEL = p && TENDERS.some(t => t.id === p) ? p : BSEL;
+  return '<header class="head"><div><h1 tabindex="-1">Tender analyser</h1><p class="sub">Reads the tender documents from the Tenders team\'s SharePoint folder, checks the requirements against the company profile and estimates price and margin with the CMT scheme. SharePoint link simulated, tenders invented.</p></div></header>' +
+    '<div class="bgrid"><section class="panel flush"><div class="sp-bar"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="3" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M1 6h14" stroke="currentColor" stroke-width="1.4"/></svg><span>SharePoint › Tenders team › <b>Tenders 2027</b></span></div>' +
+    '<ul class="files">' + TENDERS.map(t => '<li><button type="button" data-act="tender" data-id="' + t.id + '" aria-current="' + (BSEL === t.id) + '"><span class="fic">PDF</span><span><span class="t">' + esc(t.body) + '</span><br><span class="m">' + esc(t.file) + ' · ' + t.size + ' · ' + (t.mod === -1 ? 'yesterday' : (-t.mod) + ' days ago') + '</span></span>' + (state.tenderDone[t.id] ? '<span class="tag b">analysed</span>' : '<span class="tag">new</span>') + '</button></li>').join('') + '</ul></section>' +
+    '<section id="b-out">' + (BSEL ? '' : '<div class="panel empty" style="padding:40px;text-align:center">Pick a tender from the SharePoint folder to analyse it.</div>') + '</section></div>';
+}
+function tendersMount() { if (BSEL) showTender(BSEL, !state.tenderDone[BSEL]); }
+function showTender(id, animate) {
+  const t = TENDERS.find(x => x.id === id), out = $('#b-out'); if (!t || !out) return;
+  let reduce = false; try { reduce = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
+  if (animate && !reduce) {
+    const steps = ['Downloading the document from SharePoint', 'Extracting text and articles (' + t.size + ')', 'Finding the eligibility requirements', 'Checking them against the company profile', 'Estimating price and margin by language', 'Scoring the opportunity'];
+    out.innerHTML = '<div class="panel bscan"><h2>Analysis in progress</h2><p class="sub">' + esc(t.file) + '</p><div class="scan">' + steps.map(s => '<div><i></i>' + s + '</div>').join('') + '</div><div class="progress"><i></i></div></div>';
+    const rows = [...out.querySelectorAll('.scan div')], bar = out.querySelector('.progress i');
+    rows.forEach((r, i) => setTimeout(() => { if (!document.body.contains(r)) return; r.className = 'run'; if (i) rows[i - 1].className = 'done'; bar.style.width = ((i + 1) / steps.length * 100) + '%'; }, i * 420));
+    setTimeout(() => { if (!document.body.contains(out) || BSEL !== id) return; state.tenderDone[id] = true; save(); paintTender(t, true); document.querySelectorAll('.files button[data-id="' + id + '"] .tag').forEach(x => { x.className = 'tag b'; x.textContent = 'analysed'; }); }, steps.length * 420 + 250);
+  } else { state.tenderDone[id] = true; save(); paintTender(t, false); }
+}
+function paintTender(t, anim) {
+  const a = analyzeTender(t), out = $('#b-out'), R = 62, C = 2 * Math.PI * R;
+  const dt = n => iso(addDays(today(), n));
+  const maxW = Math.max(...t.volumes.map(v => v[1]));
+  const ic = { y: '✓', n: '✕', p: '!' }, il = { y: 'met', n: 'not met', p: 'to check' };
+  out.innerHTML = '<div class="stack' + (anim ? ' fade-in' : '') + '">' +
+    '<section class="panel"><div class="verdict"><svg class="ring" viewBox="0 0 150 150" role="img" aria-label="Opportunity score ' + a.score + ' out of 100"><circle class="bg" cx="75" cy="75" r="' + R + '"/><circle class="fg" id="b-ring" cx="75" cy="75" r="' + R + '" stroke-dasharray="' + C + '" stroke-dashoffset="' + C + '"/><text x="75" y="82">' + a.score + '</text><text class="rl" x="75" y="102">OUT OF 100</text></svg>' +
+    '<div><span class="vbadge ' + a.verdict[0] + '">' + a.verdict[1] + '</span><h3 style="font-size:var(--t-lg);margin-top:4px">' + esc(t.title) + '</h3><p class="sub">' + esc(t.body) + ' · base amount ' + fmtMoney(t.base) + ' · ' + esc(t.length) + ' · ' + fmtNum(a.totalW) + ' words' + (t.hours ? ' + ' + t.hours + ' hours of interpreting' : '') + '</p>' +
+    '<div class="row-actions" style="margin-top:12px"><button type="button" class="btn primary" data-act="tenderTask" data-id="' + t.id + '">Add tender card to the dashboard</button><button type="button" class="btn" data-act="tenderQ" data-id="' + t.id + '">Draft clarification questions</button></div></div></div></section>' +
+    '<div class="two"><section class="panel"><h2>Eligibility requirements</h2><ul class="req">' + a.req.map(r => '<li><span class="ic ' + r.v + '" aria-label="' + il[r.v] + '">' + ic[r.v] + '</span><span>' + esc(r.label) + '<br><span class="hint">' + il[r.v] + ' · ' + esc(PROFILE.name.toLowerCase()) + '</span></span><button type="button" class="link cite" data-act="cite" data-q="' + esc(r.cite) + '">source</button></li>').join('') + '</ul></section>' +
+    '<section class="panel"><h2>Economics</h2><div class="econ"><div><b>' + fmtMoney(t.base) + '</b><span>Base amount</span></div><div><b>' + fmtMoney(a.price) + '</b><span>Our price with the CMT scheme' + (a.missing ? ' (excluding ' + a.missing + ' languages with no vendor)' : '') + '</span></div><div class="hl"><b>' + (a.missing ? 'n/a' : fmtPct(a.maxCut)) + '</b><span>Maximum discount keeping margin ≥ ' + fmtPct(state.params.molMin / 100) + '</span></div><div><b>' + (a.missing ? 'n/a' : fmtMoney(a.floor)) + '</b><span>Lowest sustainable bid' + (a.missing ? ': vendor costs missing' : '') + '</span></div></div>' +
+    '<h2 style="margin-top:18px">Award criteria</h2><div class="wsplit"><span style="flex:' + t.criteria.tech + ';background:var(--bordeaux)">Technical ' + t.criteria.tech + '</span><span style="flex:' + t.criteria.price + ';background:var(--ink)">Price ' + t.criteria.price + '</span></div>' +
+    '<p class="hint" style="margin-top:8px">' + (t.criteria.tech >= 70 ? 'Quality matters most: focus on the technical report, the team and certifications.' : 'Price weighs a lot: prepare an aggressive discount that stays above the margin floor.') + '</p></section></div>' +
+    '<section class="panel"><h2>Volumes by language and estimated price</h2><div class="bars">' + a.lines.map(l => '<div class="bar"><span class="pair">' + esc(pairLabel(l.pair)) + '</span><span class="tr"><i data-w="' + (l.w / maxW * 100) + '"></i></span><span class="num r">' + fmtNum(l.w) + '<br><span class="hint">' + (l.u ? fmtRate(l.u.price) + '/word' : 'no vendor') + '</span></span></div>').join('') + '</div></section>' +
+    '<div class="two"><section class="panel"><h2>Deadlines</h2><div class="tline"><div><b>' + fmtShort(dt(t.pub)) + '</b>Published</div><div><b>' + fmtShort(dt(t.qa)) + '</b>Questions<br><span class="hint">' + when(t.qa) + '</span></div><div class="key"><b>' + fmtShort(dt(t.due)) + '</b>Bids due<br><span class="hint">' + when(t.due) + '</span></div><div><b>' + fmtShort(dt(t.start)) + '</b>Expected start</div></div></section>' +
+    '<section class="panel"><h2>Risks and watch-outs</h2><div class="risk">' + t.risks.map(x => '<div>' + esc(x) + '</div>').join('') + '</div></section></div>' +
+    '<section class="panel"><h2>Document: passages used in the analysis</h2><div class="doc" id="b-doc">' + highlightCites(t.text, t.req.map(r => r[2]).concat(['Base amount', 'Penalties', 'Criteria'])) + '</div></section></div>';
+  requestAnimationFrame(() => setTimeout(() => {
+    const ring = $('#b-ring'); if (ring) ring.style.strokeDashoffset = C * (1 - a.score / 100);
+    out.querySelectorAll('.bar i').forEach(i => i.style.width = i.dataset.w + '%');
+  }, anim ? 60 : 0));
+}
+function highlightCites(text, keys) {
+  const spans = [];
+  keys.forEach(k => { const i = text.toLowerCase().indexOf(String(k).toLowerCase()); if (i >= 0) spans.push({ s: i, e: i + k.length, label: k }); });
+  return highlight(text, spans).replace(/<mark data-l="([^"]*)">/g, (m, l) => '<mark data-k="' + l + '">');
+}
+function tenderQuestions(t) {
+  const a = analyzeTender(t), q = [];
+  a.req.filter(r => r.v !== 'y').forEach(r => q.push('Regarding the requirement "' + r.label + '": may it be met through reliance on another company\'s capacity or through a joint bid?'));
+  q.push('The estimated volumes by language are indicative: is a minimum guaranteed quantity foreseen?');
+  q.push('May repetitions and 100% translation memory matches be quoted at a reduced rate?');
+  if (t.risks.some(x => /penalty/i.test(x))) q.push('Does the late-delivery penalty also apply to urgent jobs requested with less than 24 hours\' notice?');
+  return 'To: ' + t.body + '\n\nWith reference to the procedure "' + t.title + '", we kindly request the following clarifications:\n\n' + q.map((x, i) => (i + 1) + '. ' + x).join('\n') + '\n\nKind regards\nCMT S.r.l. · Tenders Office';
+}
+
+/* ---------- Clicks (one handler for the whole app) ---------- */
+const ACTIONS = {
+  skip() { $('#main').focus(); },
+  reset() {
+    openDialog({ title: 'Reset the demo data?', body: 'This restores the sample requests, vendors and parameters and deletes the quotes, traffic lights and notes saved in this browser.', actions: [
+      { label: 'Reset', primary: true, run() { state = seed(); store.del(DATA_KEY); TF = null; BSEL = null; area = ''; go('dashboard'); toast('Demo data restored'); } }, { label: 'Cancel' }] });
+  },
+  area(b) { area = b.dataset.area; try { localStorage.setItem('focuspm.area', area); } catch (e) {} render(false); },
+  light(b) { setStatus(b.dataset.id, { light: b.dataset.st }); if (b.dataset.st === 'green') toast('Marked as done', { action: { label: 'Undo', run: () => setStatus(b.dataset.id, { light: 'amber' }) } }); },
+  note(b) { editing = editing === b.dataset.id ? null : b.dataset.id; render(false); const t = $('#note-' + b.dataset.id); if (t) t.focus(); },
+  noteNo() { editing = null; render(false); },
+  noteOk(b) { const v = $('#note-' + b.dataset.id).value.trim(), r = findReq(b.dataset.id); editing = null; setStatus(b.dataset.id, { note: v, light: statusOf(r) === 'red' && v ? 'amber' : statusOf(r) }); toast('Note saved'); },
+  quote(b) { openQuote(b.dataset.id); },
+  quoteFree() { openQuote(''); },
+  qmClose() { closeQuote(); },
+  qmParse() { const v = $('#qm-free').value.trim(); if (!v) { toast('Paste a text first.'); return; } runScan(v); },
+  qmSample() { $('#qm-free').value = 'Good morning, we are a partner agency. We need 6,800 words EN > FR and EN > ES with revision, including 1,200 repetitions, delivery within 2 working days. The end client is in the cosmetics sector.'; ACTIONS.qmParse(); },
+  qmCopy() { copyText($('#qm-reply').value, 'Reply copied: paste it into the email or Teams.'); },
+  qmSave() { saveQuote(); },
+  qlDel(b) { QM.lines.splice(+b.dataset.i, 1); renderQuoteCalc(false); },
+  qlAdd() { const l0 = QM.lines[0]; QM.lines.push({ svc: 'tep', pair: l0 && l0.pair ? l0.pair : 'EN>IT', qty: 1000, rep: 0, days: l0 ? l0.days : NaN, urg: 'auto' }); renderQuoteCalc(false); },
+  qstatus(b) { const q = state.quotes.find(x => x.id === b.dataset.id); q.status = b.dataset.st; if (q.status !== 'sent' && q.reqId) state.status[q.reqId] = Object.assign({}, state.status[q.reqId], { light: 'green', at: Date.now() }); changed(); toast('Quote marked as ' + b.textContent.toLowerCase()); },
+  tfCalc() { const v = $('#tf-src').value; TF = parseCosts(v); TF.src = v; if (!TF.length) toast('No language pair found. Write, for example, EN > IT: translation 0.07 revision 0.02'); renderRates(); },
+  tfSample() { $('#tf-src').value = RATES_SAMPLE; ACTIONS.tfCalc(); },
+  tfAdd() { TF.push({ pair: 'EN>IT', tMin: .06, tMax: .07, rMin: .02, rMax: .02, pMin: NaN, pMax: NaN, mkt: NaN }); renderRates(); },
+  tfDel(b) { TF.splice(+b.dataset.i, 1); renderRates(); },
+  paReset() { state.params = JSON.parse(JSON.stringify(DEFAULT_PARAMS)); save(); render(false); toast('Default parameters restored'); },
+  tender(b) { BSEL = b.dataset.id; document.querySelectorAll('.files button').forEach(x => x.setAttribute('aria-current', String(x === b))); try { history.replaceState(null, '', '#/tenders/' + BSEL); } catch (e) {} showTender(BSEL, !state.tenderDone[BSEL]); },
+  cite(b) { const m = [...document.querySelectorAll('#b-doc mark')].find(x => x.dataset.k === b.dataset.q); if (m) { m.scrollIntoView({ block: 'center', behavior: 'smooth' }); m.classList.remove('flash'); void m.offsetWidth; m.classList.add('flash'); } },
+  tenderTask(b) {
+    const t = TENDERS.find(x => x.id === b.dataset.id), a = analyzeTender(t);
+    if (state.requests.some(r => r.id === 'tender-' + t.id)) { toast('The tender card is already on the dashboard.'); return; }
+    addRequest({ id: 'tender-' + t.id, area: 'Tenders', section: t.due <= 10 ? 'urgent' : 'week', title: 'Tender ' + t.body + ': ' + a.verdict[1].toLowerCase(), from: 'Tender analyser · SharePoint', due: iso(addDays(today(), t.qa)), why: 'Score ' + a.score + '/100. Maximum sustainable discount ' + (a.missing ? 'n/a' : fmtPct(a.maxCut)) + '. Bids due ' + fmtDate(iso(addDays(today(), t.due))) + '.', action: 'Send the clarification questions before the deadline.' });
+    toast('Tender card added to the dashboard', { action: { label: 'Open dashboard', run: () => go('dashboard') } });
+  },
+  tenderQ(b) { const t = TENDERS.find(x => x.id === b.dataset.id), text = el('textarea', { 'aria-label': 'Clarification questions', rows: 12 }, tenderQuestions(t)); openDialog({ title: 'Clarification questions', body: el('div', {}, el('p', { class: 'sub' }, 'Draft built from the unmet requirements and the risks found in the tender.'), text), actions: [{ label: 'Copy', primary: true, run() { copyText(text.value, 'Questions copied.'); return false; } }, { label: 'Close' }] }); },
+  idea(b) { showIdea(IDEAS.find(i => i.id === b.dataset.idea)); },
+  preview(b) { openPreview(b.dataset.id); },
+  pvClose() { closePreview(); }
+};
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-go],[data-act]');
+  if (!t || t.disabled) return;
+  if (t.dataset.go) { if (QM) closeQuote(); go(t.dataset.go); }
+  else if (ACTIONS[t.dataset.act]) ACTIONS[t.dataset.act](t, e);
+});
+$('#qm').addEventListener('close', () => { QM = null; });
+$('#pv').addEventListener('close', () => { pvSubs.forEach(f => f()); pvSubs = []; try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (e) {} $('#pv').replaceChildren(); });
+window.addEventListener('popstate', () => { readHash(); render(true); });
+
+/* ---------- Tools registry and the api given to each tool ---------- */
+const TOOLS = [];
+function registerTool(tool) {
+  if (!tool || !tool.id || typeof tool.render !== 'function') { console.error('registerTool needs an id and a render function', tool); return; }
+  const i = TOOLS.findIndex(t => t.id === tool.id);
+  if (i >= 0) TOOLS[i] = tool; else TOOLS.push(tool);
+  if (view.name === 'tools') render(false);
+}
+function makeApi() {
+  return {
+    getRequests: () => state.requests.map(publicReq), getQuotes: () => clone(state.quotes), getVendors: () => clone(state.vendors), getTenders: () => clone(TENDERS),
+    addRequest: d => addRequest(d), openQuote: x => openQuote(x),
+    quote: text => quoteFromText(text), price: line => priceLine(Object.assign({ rep: 0 }, line), 'd', false),
+    services: clone(SERVICES), languages: clone(LANGS), params: () => clone(state.params),
+    toast: (m, o) => toast(m, o), formatMoney: fmtMoney, formatRate: fmtRate, formatNumber: fmtNum, formatDate: d => fmtDate(d),
+    today: () => today(), iso, daysUntil, addWorkingDays,
+    onChange(fn) { toolListeners.push(fn); return () => { toolListeners = toolListeners.filter(f => f !== fn); }; },
+    el
+  };
+}
+/* "Wow" ideas ready to ask Claude for during the workshop */
+const IDEAS = [
+  { id: 'capacity', wow: true, title: 'Vendor capacity radar', text: 'A heat map of vendors × days showing who is free before a deadline.', prompt: 'Add a "Vendor capacity radar" to the Tools section. Show a grid with vendors as rows and the next 10 working days as columns, shaded from white to CMT bordeaux by workload (invent a realistic workload for each vendor). Above it, add a language pair filter: when I pick a pair, highlight the vendors who cover it and say who has the most room.' },
+  { id: 'briefing', wow: true, title: 'Spoken morning briefing', text: 'The computer reads the urgent dashboard items out loud, like an assistant.', prompt: 'Add a "Spoken briefing" to the Tools section. With a Listen button, use the browser speech synthesis (speechSynthesis, English voice) to read a summary of the urgent dashboard items: how many there are, then the first three with due date and next action. Also show the text being read and a Stop button.' },
+  { id: 'file', wow: true, title: 'Word count from a dropped file', text: 'Drop a .txt or .xliff file and the quote starts by itself with the counted words.', prompt: 'Add a "Word count from file" to the Tools section. I can drop a .txt, .xliff or .xlf file: read it in the browser without sending it anywhere, count the words (for xliff only the <source> elements, leaving placeholders such as %@, %d and {name} alone) and the identical repetitions. Then an "Open quote" button calls api.openQuote with a text like "N words EN > IT with revision, including M repetitions".' },
+  { id: 'risk', wow: true, title: 'Predictive delay light', text: 'Estimates which deliveries may slip and shows them before it happens.', prompt: 'Add a "Predictive delay light" to the Tools section. For each open dashboard item, compute a delay risk from 0 to 100 (days to deadline, traffic light status, whether it is waiting for a reply) and show it as a sorted list with a coloured bar and a one-line "why". Put the three riskiest at the top.' },
+  { id: 'history', title: 'Price history check', text: 'Shows whether a price is above or below past quotes for the same language pair, per word or per minute.', prompt: 'Add a "Price history check" to the Tools section. Invent a history of 20 past quotes (language pair, service, price per word, or per minute for subtitling and transcription, date). I pick a language pair and a service and see a dot chart over time, the average, and where today\'s price from api.price sits.' },
+  { id: 'deadline', title: 'Delivery date calculator', text: 'Counts working days for words or minutes, skipping weekends and Italian public holidays.', prompt: 'Add a delivery date calculator to the Tools section. I enter the volume and the service, it uses daily throughputs (2,500 words a day for translation, 5,000 for post-editing, 40 minutes of video a day for subtitling, 60 minutes of audio for transcription) and api.addWorkingDays to suggest the delivery date, skipping weekends and Italian public holidays. For subtitling and transcription the volume is in minutes.' }
+];
+function showIdea(idea) {
+  const text = el('textarea', { readonly: true, 'aria-label': 'Request to copy', rows: 8 }, idea ? idea.prompt : 'Add a feature to the Tools section that ');
+  openDialog({
+    title: idea ? idea.title : 'Your own idea',
+    body: el('div', {}, el('p', {}, 'Copy this request, paste it into your chat with Claude together with the index.html file, and change any detail you like.'), text),
+    actions: [{ label: 'Copy request', primary: true, run() { copyText(text.value, 'Request copied. Paste it into the chat.'); return false; } }, { label: 'Close' }]
+  });
+}
+function mountTools() {
+  toolListeners = [];
+  const list = $('#tool-list'), slots = $('#tool-slots');
+  TOOLS.forEach(t => {
+    const body = el('div', { class: 'tool-body' });
+    list.append(el('section', { class: 'panel tool', 'aria-labelledby': 'tool-' + t.id }, el('h2', { id: 'tool-' + t.id }, t.title || t.id), t.description ? el('p', { class: 'sub', style: 'margin:-6px 0 16px' }, t.description) : null, body));
+    try { t.render(body, makeApi()); }
+    catch (e) {
+      console.error('The tool "' + t.id + '" failed:', e);
+      body.replaceChildren(el('div', { class: 'tool-err', role: 'alert' }, el('strong', {}, 'This feature stopped with an error.'), el('p', { class: 'sub' }, String(e && e.message || e) + '. The rest of FOCUS PM still works. Ask Claude to fix this feature and paste this message.')));
+    }
+  });
+  if (!TOOLS.length) list.innerHTML = '<p class="empty">No tools added yet. Pick an idea below or describe your own.</p>';
+  const free = IDEAS.filter(i => !TOOLS.some(t => t.id === i.id));
+  slots.innerHTML = free.map(i => '<div class="slot"><span class="plus" aria-hidden="true">+</span>' + (i.wow ? '<span class="wow">Wow factor</span>' : '') + '<strong>' + esc(i.title) + '</strong><span>' + esc(i.text) + '</span>' +
+    '<div class="slot-actions"><button type="button" class="btn small primary" data-act="idea" data-idea="' + i.id + '">Add this feature</button>' +
+    (PREVIEWS[i.id] ? '<button type="button" class="btn small" data-act="preview" data-id="' + i.id + '" aria-label="Preview the finished ' + esc(i.title) + '">▶ Preview</button>' : '') + '</div></div>').join('') +
+    '<div class="slot"><span class="plus" aria-hidden="true">+</span><strong>Your own idea</strong><span>Describe any helper you would use every day.</span><div class="slot-actions"><button type="button" class="btn small primary" data-act="idea">Add a feature</button></div></div>';
+}
+
+/* ---------- Previews: finished examples of the ideas, opened from the Tools view ---------- */
+const PREVIEWS = {};
+let pvSubs = [];
+function registerPreview(tool) {
+  if (!tool || !tool.id || typeof tool.render !== 'function') return;
+  PREVIEWS[tool.id] = tool;
+  if (view.name === 'tools') render(false);
+}
+function openPreview(id) {
+  const t = PREVIEWS[id], d = $('#pv'); if (!t) return;
+  const body = el('div', { class: 'tool-body' }), api = makeApi();
+  api.onChange = fn => { toolListeners.push(fn); const off = () => { toolListeners = toolListeners.filter(f => f !== fn); }; pvSubs.push(off); return off; };
+  d.innerHTML = '<div class="qm-head"><div><h2 id="pv-title">Preview · ' + esc(t.title) + '</h2><p class="sub">A finished example of this idea</p></div><button type="button" class="qm-x" data-act="pvClose" aria-label="Close preview">' + ICON.x + '</button></div>';
+  d.append(el('div', { class: 'pv-body' },
+    el('p', { class: 'pv-note' }, 'Ready-made example to show if someone gets stuck. Participants build their own version with Claude.'),
+    el('section', { class: 'panel' }, el('h2', {}, t.title), t.description ? el('p', { class: 'sub', style: 'margin:-6px 0 16px' }, t.description) : null, body)));
+  try { d.showModal(); } catch (e) { d.setAttribute('open', ''); }
+  try { t.render(body, api); }
+  catch (e) { console.error('The preview "' + id + '" failed:', e); body.replaceChildren(el('div', { class: 'tool-err', role: 'alert' }, el('strong', {}, 'This preview stopped with an error.'), el('p', { class: 'sub' }, String(e && e.message || e)))); }
+}
+function closePreview() { const d = $('#pv'); try { d.close(); } catch (e) { d.removeAttribute('open'); } }
+
+/* ---------- Start ---------- */
+readHash();
+render(false);
+</script>
+
+<script>
+/* =====
+   PREVIEWS: finished examples of the six ideas in the Tools view.
+   They open with the Preview button so the presenter can show the result
+   if someone gets stuck. Leave this section as it is: participants build
+   their own version as a tool, from scratch.
+   ===== */
+
+/* Vendor capacity radar: vendors × next 10 working days, shaded by workload (invented). */
+registerPreview({
+  id: 'capacity',
+  title: 'Vendor capacity radar',
+  description: 'Workload for the next 10 working days. Pick a language pair to see who covers it and who has the most room.',
+  render(container, api) {
+    const vendors = api.getVendors();
+    const days = [];
+    for (let i = 1; i <= 10; i++) days.push(api.addWorkingDays(api.today(), i));
+    /* invented but stable workload (0–100%) for each vendor and day */
+    const BASE = { f1: 85, f2: 45, f3: 90, f4: 60, f5: 25, f6: 70, f7: 50, f8: 35, f9: 80, f10: 40, f11: 65, f12: 30, f13: 55 };
+    const load = (v, i) => {
+      const n = parseInt(v.id.replace(/\D/g, ''), 10) || 1;
+      const noise = Math.abs(Math.sin(n * 12.9898 + i * 78.233) * 43758.5453) % 1;
+      const trend = i < 3 ? 12 : i > 6 ? -18 : 0;
+      return Math.round(Math.max(0, Math.min(100, (BASE[v.id] || 50) + trend + noise * 50 - 25)));
+    };
+    const key = p => String(p).toUpperCase().replace(/\s/g, '');
+    const covers = (v, pair) => {
+      if (!pair) return true;
+      const [a, b] = pair.split('>');
+      return v.pairs.some(p => key(p) === pair || key(p) === a + '<>' + b || key(p) === b + '<>' + a);
+    };
+    const pairs = [...new Set(vendors.flatMap(v => v.pairs).filter(p => p !== 'DTP').map(p => key(p).replace('<>', '>')))].sort();
+
+    const pick = api.el('select', { id: 'capacity-pair' }, api.el('option', { value: '' }, 'All vendors'), pairs.map(p => api.el('option', { value: p }, p.replace('>', ' › '))));
+    const summary = api.el('p', { class: 'capacity-summary', 'aria-live': 'polite' });
+    const grid = api.el('div', { class: 'scroll' });
+
+    function draw() {
+      const pair = pick.value;
+      const rows = vendors.map(v => {
+        const loads = days.map((d, i) => load(v, i));
+        return { v, loads, free: 100 - loads.reduce((s, x) => s + x, 0) / loads.length, ok: covers(v, pair) };
+      });
+      const table = api.el('table', { class: 'capacity-grid' },
+        api.el('thead', {}, api.el('tr', {}, api.el('th', { scope: 'col' }, 'Vendor'),
+          days.map(d => api.el('th', { scope: 'col' }, d.toLocaleDateString('en-GB', { weekday: 'short' }), api.el('br'), d.getDate())),
+          api.el('th', { scope: 'col', class: 'num' }, 'Free'))),
+        api.el('tbody', {}, rows.map(r => api.el('tr', { class: r.ok ? '' : 'capacity-off' },
+          api.el('th', { scope: 'row' }, r.v.name, api.el('span', { class: 'sub' }, r.v.pairs.join(' '))),
+          r.loads.map((x, i) => api.el('td', { title: r.v.name + ', ' + days[i].toDateString() + ': ' + x + '% booked', style: 'background:color-mix(in srgb, #7B1A1A ' + x + '%, white);color:' + (x > 55 ? '#fff' : '#1A1A1A') }, x)),
+          api.el('td', { class: 'num' }, api.el('b', {}, Math.round(r.free) + '%'))))));
+      grid.replaceChildren(table);
+      const fit = rows.filter(r => r.ok && pair).sort((a, b) => b.free - a.free);
+      summary.replaceChildren(!pair ? 'Pick a language pair to find the vendor with the most room.'
+        : !fit.length ? 'No vendor covers ' + pair.replace('>', ' › ') + '.'
+          : api.el('span', {}, fit.length + ' vendor' + (fit.length > 1 ? 's' : '') + ' cover ' + pair.replace('>', ' › ') + '. Most room: ', api.el('b', {}, fit[0].v.name), ' (' + Math.round(fit[0].free) + '% free over the next 10 working days).'));
+    }
+    pick.addEventListener('change', draw);
+    container.append(
+      api.el('div', { class: 'row-actions' }, api.el('div', { class: 'field' }, api.el('label', { for: 'capacity-pair' }, 'Language pair'), pick)),
+      summary, grid,
+      api.el('p', { class: 'hint' }, 'Numbers are % of each day already booked. Workload is invented for the demo.'));
+    draw();
+  }
+});
+
+/* Spoken morning briefing: reads the urgent dashboard items aloud with the browser's speech synthesis. */
+registerPreview({
+  id: 'briefing',
+  title: 'Spoken morning briefing',
+  description: 'Press Listen and the browser reads out the urgent items on the dashboard.',
+  render(container, api) {
+    const speech = 'speechSynthesis' in window ? window.speechSynthesis : null;
+    const text = api.el('div', { class: 'briefing-text', 'aria-live': 'polite' });
+    const listen = api.el('button', { type: 'button', class: 'btn primary' }, '▶ Listen');
+    const stop = api.el('button', { type: 'button', class: 'btn', disabled: true }, '■ Stop');
+    const wave = api.el('span', { class: 'briefing-wave', 'aria-hidden': 'true' }, [1, 2, 3, 4, 5].map(() => api.el('i')));
+
+    const whenText = iso => { const d = api.daysUntil(iso); return d < 0 ? 'overdue' : d === 0 ? 'due today' : d === 1 ? 'due tomorrow' : 'due ' + api.formatDate(iso); };
+    function script() {
+      const urgent = api.getRequests().filter(r => r.section === 'urgent' && r.light !== 'green').sort((a, b) => a.due.localeCompare(b.due));
+      const h = new Date().getHours(), hello = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+      if (!urgent.length) return [hello + '.', 'Nothing urgent on the dashboard right now. Enjoy the calm.'];
+      const lines = [hello + '.', 'You have ' + urgent.length + ' urgent item' + (urgent.length > 1 ? 's' : '') + '.'];
+      urgent.slice(0, 3).forEach((r, i) => {
+        lines.push(['First', 'Second', 'Third'][i] + ': ' + r.title.replace(/<>/g, 'and').replace(/>/g, 'to') + ', ' + whenText(r.due) + '.' + (r.action ? ' Next step: ' + r.action : ''));
+      });
+      if (urgent.length > 3) lines.push('And ' + (urgent.length - 3) + ' more on the dashboard.');
+      return lines;
+    }
+    function show(active) {
+      text.replaceChildren(...script().map((l, i) => api.el('p', { class: i === active ? 'briefing-now' : '' }, l)));
+    }
+    function setPlaying(on) { listen.disabled = on; stop.disabled = !on; wave.classList.toggle('on', on); }
+
+    listen.addEventListener('click', () => {
+      const lines = script();
+      show(-1);
+      if (!speech) { api.toast('This browser cannot speak: the text is shown below.'); return; }
+      speech.cancel();
+      const voices = speech.getVoices(), voice = voices.find(v => /en-GB/i.test(v.lang)) || voices.find(v => /^en/i.test(v.lang));
+      lines.forEach((l, i) => {
+        const u = new SpeechSynthesisUtterance(l);
+        u.lang = 'en-GB'; if (voice) u.voice = voice; u.rate = 1;
+        u.onstart = () => show(i);
+        if (i === lines.length - 1) u.onend = () => { setPlaying(false); show(-1); };
+        speech.speak(u);
+      });
+      setPlaying(true);
+    });
+    stop.addEventListener('click', () => { if (speech) speech.cancel(); setPlaying(false); show(-1); });
+
+    container.append(api.el('div', { class: 'row-actions' }, listen, stop, wave), text);
+    show(-1);
+    api.onChange(() => { if (stop.disabled) show(-1); });
+  }
+});
+
+/* Word count from a dropped file: .txt, .xliff or .xlf, read in the browser only, then opens a quote. */
+registerPreview({
+  id: 'file',
+  title: 'Word count from a dropped file',
+  description: 'Drop a .txt, .xliff or .xlf file. It is read in your browser only and never sent anywhere.',
+  render(container, api) {
+    const SAMPLE = '<?xml version="1.0" encoding="UTF-8"?>\n<xliff version="1.2"><file source-language="en" target-language="it" original="app.strings"><body>\n' +
+      ['Welcome back, {name}!', 'You have %d new messages.', 'Save', 'Cancel', 'Save', 'Your order has shipped and will arrive within three working days.', 'Cancel', 'Delete this item? This cannot be undone.', 'Settings', 'You have %d new messages.', 'Log out of your account on this device.', 'Save']
+        .map((s, i) => '<trans-unit id="' + (i + 1) + '"><source>' + s + '</source><target></target></trans-unit>').join('\n') + '\n</body></file></xliff>';
+    /* placeholders are not words: %@, %d, %1$s, {name}, \n */
+    const PH = /%(\d+\$)?[@dsfi]|\{[^}]*\}|\\n/g;
+    const countWords = s => (s.replace(PH, ' ').match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) || []).length;
+    function segments(name, text) {
+      if (/\.xl?iff?$/i.test(name) || /<xliff/i.test(text)) {
+        const doc = new DOMParser().parseFromString(text, 'application/xml');
+        return [...doc.getElementsByTagName('source')].map(n => n.textContent.trim()).filter(Boolean);
+      }
+      return text.split(/(?<=[.!?])\s+|\n+/).map(s => s.trim()).filter(Boolean);
+    }
+    let result = null;
+    const zone = api.el('label', { class: 'file-zone', for: 'file-input' }, api.el('b', {}, 'Drop a file here'), api.el('span', {}, 'or click to choose one · .txt, .xliff, .xlf'));
+    const input = api.el('input', { type: 'file', id: 'file-input', accept: '.txt,.xliff,.xlf', class: 'sr' });
+    const sample = api.el('button', { type: 'button', class: 'btn' }, 'Try a sample XLIFF');
+    const pair = api.el('input', { id: 'file-pair', value: 'EN > IT' });
+    const svc = api.el('select', { id: 'file-svc' }, api.el('option', { value: 'with revision' }, 'Translation + revision'), api.el('option', { value: 'MTPE post-editing' }, 'MT post-editing'));
+    const days = api.el('input', { id: 'file-days', type: 'number', min: '1', value: '3' });
+    const out = api.el('div', { class: 'file-out', 'aria-live': 'polite' });
+    const go = api.el('button', { type: 'button', class: 'btn primary', disabled: true }, 'Open quote');
+
+    function analyse(name, text) {
+      const segs = segments(name, text), seen = new Set();
+      let words = 0, reps = 0;
+      segs.forEach(s => { const w = countWords(s), k = s.toLowerCase(); words += w; if (seen.has(k)) reps += w; else seen.add(k); });
+      result = { name, segs: segs.length, words, reps };
+      out.replaceChildren(
+        api.el('p', { class: 'sub' }, name),
+        api.el('div', { class: 'file-figs' },
+          [['Segments', segs.length], ['Words', words], ['Repetitions', reps], ['New words', words - reps]].map(([l, v]) => api.el('div', {}, api.el('b', {}, api.formatNumber(v)), api.el('span', {}, l)))),
+        api.el('p', { class: 'hint' }, 'Placeholders such as %@, %d and {name} are not counted as words.'));
+      go.disabled = !words;
+    }
+    function read(file) {
+      if (!file) return;
+      if (file.size > 5e6) { api.toast('File too large for the demo (max 5 MB).'); return; }
+      const fr = new FileReader();
+      fr.onload = () => analyse(file.name, String(fr.result));
+      fr.readAsText(file);
+    }
+    input.addEventListener('change', () => read(input.files[0]));
+    ['dragenter', 'dragover'].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.add('on'); }));
+    ['dragleave', 'drop'].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.remove('on'); }));
+    zone.addEventListener('drop', e => read(e.dataTransfer.files[0]));
+    sample.addEventListener('click', () => analyse('sample-app-strings.xliff', SAMPLE));
+    go.addEventListener('click', () => {
+      if (!result) return;
+      api.openQuote(api.formatNumber(result.words) + ' words ' + pair.value.trim() + ' ' + svc.value + ', including ' + api.formatNumber(result.reps) + ' repetitions, delivery within ' + (Number(days.value) || 3) + ' working days. File: ' + result.name + '.');
+    });
+    const f = (id, label, el) => api.el('div', { class: 'field' }, api.el('label', { for: id }, label), el);
+    container.append(
+      api.el('div', { class: 'file-grid' },
+        api.el('div', {}, zone, input, api.el('div', { class: 'row-actions', style: 'margin-top:8px' }, sample)),
+        api.el('div', {}, out, api.el('div', { class: 'file-opts' }, f('file-pair', 'Language pair', pair), f('file-svc', 'Service', svc), f('file-days', 'Working days', days)), api.el('div', { class: 'row-actions', style: 'margin-top:12px' }, go))));
+    out.replaceChildren(api.el('p', { class: 'empty' }, 'No file yet.'));
+  }
+});
+
+/* Predictive delay light: a 0–100 delay risk for each open dashboard item, with the reasons. */
+registerPreview({
+  id: 'risk',
+  title: 'Predictive delay light',
+  description: 'Estimates which open items may slip, so you can act before it happens.',
+  render(container, api) {
+    function assess(r, quotes) {
+      const d = api.daysUntil(r.due), why = [];
+      let s = d < 0 ? 60 : d === 0 ? 45 : d === 1 ? 35 : d === 2 ? 25 : d <= 5 ? 15 : 5;
+      why.push(d < 0 ? 'already overdue' : d === 0 ? 'due today' : d === 1 ? 'due tomorrow' : 'due in ' + d + ' days');
+      if (r.light === 'red') { s += 20; why.push('not started'); } else if (r.light === 'amber') { s += 8; why.push('in progress'); }
+      if (r.section === 'waiting') { s += 15; why.push('waiting for someone else'); }
+      if (r.quote && !quotes.some(q => q.reqId === r.id)) { s += 10; why.push('quote not prepared'); }
+      if (/silent|not respond|no reply/i.test(r.title + ' ' + r.why)) { s += 10; why.push('no reply from the other side'); }
+      if (r.area === 'Production') { s += 5; why.push('production job'); }
+      return { r, score: Math.min(100, s), why };
+    }
+    const level = s => s >= 70 ? ['high', 'High'] : s >= 45 ? ['mid', 'Medium'] : ['low', 'Low'];
+    const host = api.el('div');
+    function draw() {
+      const quotes = api.getQuotes();
+      const list = api.getRequests().filter(r => r.light !== 'green').map(r => assess(r, quotes)).sort((a, b) => b.score - a.score);
+      const top = list.slice(0, 3), rest = list.slice(3);
+      const row = x => {
+        const [cls, lbl] = level(x.score);
+        return api.el('li', { class: 'risk-row' },
+          api.el('div', { class: 'risk-score risk-' + cls }, api.el('b', {}, x.score), api.el('span', {}, lbl)),
+          api.el('div', {}, api.el('strong', {}, x.r.title), api.el('div', { class: 'risk-track' }, api.el('i', { class: 'risk-' + cls, style: 'width:' + x.score + '%' })), api.el('p', { class: 'sub' }, 'Why: ' + x.why.join(', ') + '.')));
+      };
+      host.replaceChildren(
+        api.el('h3', { class: 'risk-h' }, 'Most at risk'),
+        api.el('ol', { class: 'risk-list risk-top' }, top.map(row)),
+        rest.length ? api.el('h3', { class: 'risk-h' }, 'Everything else') : null,
+        api.el('ol', { class: 'risk-list' }, rest.map(row)),
+        api.el('p', { class: 'hint' }, 'Score = time to deadline + traffic light + waiting on others + missing quote. Change a traffic light on the dashboard and the ranking updates.'));
+    }
+    container.append(host);
+    draw();
+    api.onChange(draw);
+  }
+});
+
+/* Price history check: 20 invented past quotes per pair and service, compared with today's price. */
+registerPreview({
+  id: 'history',
+  title: 'Price history check',
+  description: 'Is today\'s price above or below what we quoted before for the same language pair?',
+  render(container, api) {
+    const PAIRS = ['EN>IT', 'EN>DE', 'EN>FR', 'EN>ES', 'FR>IT', 'IT>EN'];
+    const SVCS = [['tep', 'Translation + revision'], ['mtpe', 'MT post-editing + revision'], ['trad', 'Translation only'], ['sub', 'Subtitling (per minute)'], ['tra', 'Transcription (per minute)']];
+    /* stable pseudo-random numbers, so the invented history is the same every time */
+    const rnd = seed => () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+    function history(pair, svc, now) {
+      let h = 11; for (const c of pair + svc) h = (h * 31 + c.charCodeAt(0)) % 2147483647;
+      const r = rnd(h || 1), out = [];
+      for (let i = 0; i < 20; i++) {
+        const daysAgo = Math.round(15 + r() * 350), drift = 1 - daysAgo / 365 * 0.06;
+        out.push({ date: new Date(api.today().getTime() - daysAgo * 864e5), price: Math.round(now * drift * (0.88 + r() * 0.22) * (now >= 1 ? 100 : 1000)) / (now >= 1 ? 100 : 1000) });
+      }
+      return out.sort((a, b) => a.date - b.date);
+    }
+    const sel = (id, list) => api.el('select', { id }, list.map(([v, l]) => api.el('option', { value: v }, l)));
+    const pairSel = sel('history-pair', []), svcSel = sel('history-svc', SVCS);
+    /* only the pairs that have a vendor for the chosen service */
+    function fillPairs() {
+      const cur = pairSel.value, ok = PAIRS.filter(p => api.price({ svc: svcSel.value, pair: p, qty: 1 }).ok);
+      pairSel.replaceChildren(...ok.map(p => api.el('option', { value: p }, p.replace('>', ' › '))));
+      if (ok.indexOf(cur) >= 0) pairSel.value = cur;
+    }
+    const chart = api.el('div', { class: 'history-chart' }), note = api.el('p', { class: 'history-note', 'aria-live': 'polite' });
+    function draw() {
+      const p = api.price({ svc: svcSel.value, pair: pairSel.value, qty: 1 });
+      const unit = (api.services[svcSel.value] || {}).unit === 'minutes' ? 'minute' : 'word', fmt = v => unit === 'minute' ? api.formatMoney(v) : api.formatRate(v);
+      if (!p.ok) { chart.replaceChildren(); note.textContent = p.why; return; }
+      const now = p.unit, pts = history(pairSel.value, svcSel.value, now), avg = pts.reduce((s, x) => s + x.price, 0) / pts.length;
+      const W = 640, H = 240, L = 54, R = 20, T = 16, B = 30;
+      const t0 = pts[0].date.getTime(), t1 = api.today().getTime();
+      const lo = Math.min(now, ...pts.map(x => x.price)) * 0.95, hi = Math.max(now, ...pts.map(x => x.price)) * 1.05;
+      const X = t => L + (t - t0) / (t1 - t0) * (W - L - R), Y = v => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+      const ns = 'http://www.w3.org/2000/svg', s = (tag, a, txt) => { const n = document.createElementNS(ns, tag); for (const k in a) n.setAttribute(k, a[k]); if (txt != null) n.textContent = txt; return n; };
+      const svg = s('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': 'Past prices for ' + pairSel.value + ' compared with today' });
+      for (let i = 0; i <= 3; i++) { const v = lo + (hi - lo) * i / 3; svg.append(s('line', { x1: L, x2: W - R, y1: Y(v), y2: Y(v), class: 'history-grid' }), s('text', { x: L - 8, y: Y(v) + 4, class: 'history-axis', 'text-anchor': 'end' }, fmt(v))); }
+      [0, 0.5, 1].forEach(f => { const t = t0 + (t1 - t0) * f; svg.append(s('text', { x: X(t), y: H - 8, class: 'history-axis', 'text-anchor': f === 0 ? 'start' : f === 1 ? 'end' : 'middle' }, new Date(t).toLocaleDateString('en-GB', { month: 'short', year: '2-digit' }))); });
+      svg.append(s('line', { x1: L, x2: W - R, y1: Y(avg), y2: Y(avg), class: 'history-avg' }), s('text', { x: L + 6, y: Y(avg) - 6, class: 'history-axis', 'text-anchor': 'start' }, 'average ' + fmt(avg)));
+      pts.forEach(x => { const c = s('circle', { cx: X(x.date.getTime()), cy: Y(x.price), r: 5, class: 'history-dot' }); c.append(s('title', {}, x.date.toLocaleDateString('en-GB') + ': ' + fmt(x.price))); svg.append(c); });
+      const nx = X(t1), ny = Y(now);
+      svg.append(s('rect', { x: nx - 7, y: ny - 7, width: 14, height: 14, transform: 'rotate(45 ' + nx + ' ' + ny + ')', class: 'history-now' }), s('text', { x: nx - 12, y: ny - 12, class: 'history-label', 'text-anchor': 'end' }, 'today ' + fmt(now)));
+      chart.replaceChildren(svg);
+      const diff = (now - avg) / avg;
+      note.replaceChildren('Today\'s price ', api.el('b', {}, fmt(now) + ' per ' + unit), ' is ', api.el('b', { class: Math.abs(diff) > 0.08 ? 'history-warn' : '' }, (Math.abs(diff) * 100).toFixed(1) + '% ' + (diff >= 0 ? 'above' : 'below')), ' the average of the last 20 quotes (' + fmt(avg) + ').' + (diff > 0.08 ? ' The client may notice the increase.' : diff < -0.08 ? ' Check that we are not underpricing.' : ' In line with what we usually quote.'));
+    }
+    pairSel.addEventListener('change', draw);
+    svcSel.addEventListener('change', () => { fillPairs(); draw(); });
+    fillPairs();
+    const f = (id, label, el) => api.el('div', { class: 'field' }, api.el('label', { for: id }, label), el);
+    container.append(api.el('div', { class: 'history-opts' }, f('history-pair', 'Language pair', pairSel), f('history-svc', 'Service', svcSel)), note, chart, api.el('p', { class: 'hint' }, 'Past quotes are invented for the demo. Today\'s price comes from the pricing engine.'));
+    draw();
+    api.onChange(draw);
+  }
+});
+
+/* Delivery date calculator: volume ÷ daily throughput, counted in working days (weekends and Italian holidays skipped). */
+registerPreview({
+  id: 'deadline',
+  title: 'Delivery date calculator',
+  description: 'Enter the volume and the service: it suggests a delivery date, skipping weekends and Italian public holidays.',
+  render(container, api) {
+    /* name, throughput per day, extra days, unit, what the extra days are for, default volume (demo values) */
+    const SVCS = {
+      tep: ['Translation + revision', 2500, 1, 'words', 'revision', 12000],
+      trad: ['Translation only', 2500, 0, 'words', '', 12000],
+      mtpe: ['MT post-editing + revision', 5000, 1, 'words', 'revision', 12000],
+      rev: ['Revision only', 6000, 0, 'words', '', 12000],
+      sub: ['Subtitling', 40, 1, 'minutes', 'quality check', 90],
+      tra: ['Transcription', 60, 0, 'minutes', '', 90]
+    };
+    const vol = api.el('input', { id: 'deadline-vol', type: 'number', min: '0', value: '12000' });
+    const volLabel = api.el('label', { for: 'deadline-vol' }, 'Words');
+    const svc = api.el('select', { id: 'deadline-svc' }, Object.keys(SVCS).map(k => api.el('option', { value: k }, SVCS[k][0])));
+    const start = api.el('input', { id: 'deadline-start', type: 'date', value: api.iso(api.today()) });
+    const out = api.el('div', { class: 'deadline-out', 'aria-live': 'polite' });
+    let unit = 'words';
+    function draw() {
+      const [name, perDay, extraDays, u, extraName] = SVCS[svc.value];
+      const q = Math.max(0, Number(vol.value) || 0);
+      const work = Math.max(1, Math.ceil(q / perDay)), extra = q ? extraDays : 0, total = work + extra;
+      const from = start.value || api.iso(api.today()), due = api.addWorkingDays(from, total);
+      const strip = [], skipped = [];
+      let d = new Date(api.addWorkingDays(from, 0)), n = 0;
+      while (d < due) {
+        d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
+        const prev = new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1), wk = api.iso(api.addWorkingDays(prev, 1)) === api.iso(d);
+        const we = d.getDay() === 0 || d.getDay() === 6, kind = wk ? (++n <= work ? 'work' : 'rev') : we ? 'weekend' : 'holiday';
+        if (kind === 'holiday') skipped.push(api.formatDate(d));
+        strip.push(api.el('div', { class: 'deadline-day deadline-' + kind, title: d.toDateString() + ' · ' + (kind === 'rev' ? extraName : kind) }, api.el('span', {}, d.toLocaleDateString('en-GB', { weekday: 'narrow' })), api.el('b', {}, d.getDate())));
+      }
+      out.replaceChildren(
+        api.el('p', { class: 'deadline-big' }, api.el('span', {}, 'Delivery'), api.el('b', {}, due.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }))),
+        api.el('p', { class: 'sub' }, api.formatNumber(q) + ' ' + u + ' at ' + api.formatNumber(perDay) + ' ' + u + ' a day = ' + work + ' working day' + (work > 1 ? 's' : '') + (extra ? ' + ' + extra + ' day for ' + extraName : '') + '. ' + (skipped.length ? 'Public holiday skipped: ' + skipped.join(', ') + '.' : 'No public holidays in between.')),
+        api.el('div', { class: 'deadline-strip' }, strip),
+        api.el('div', { class: 'deadline-legend' }, [['work', u === 'minutes' ? name.toLowerCase() : 'work'], ['rev', extraName || 'check'], ['weekend', 'weekend'], ['holiday', 'holiday']].map(([k, l]) => api.el('span', {}, api.el('i', { class: 'deadline-' + k }), l))),
+        api.el('p', { class: 'hint' }, 'Daily throughput is a demo value: ' + Object.values(SVCS).map(s => s[0].toLowerCase() + ' ' + api.formatNumber(s[1]) + ' ' + s[3]).join(', ') + '.'));
+    }
+    svc.addEventListener('change', () => {
+      const s = SVCS[svc.value];
+      if (s[3] !== unit) { unit = s[3]; vol.value = s[5]; vol.step = unit === 'words' ? '100' : '5'; volLabel.textContent = unit === 'words' ? 'Words' : 'Minutes of audio or video'; }
+      draw();
+    });
+    [vol, start].forEach(x => x.addEventListener('input', draw));
+    const f = (label, el) => api.el('div', { class: 'field' }, label, el);
+    container.append(api.el('div', { class: 'deadline-opts' }, f(volLabel, vol), f(api.el('label', { for: 'deadline-svc' }, 'Service'), svc), f(api.el('label', { for: 'deadline-start' }, 'Start date'), start)), out);
+    draw();
+  }
+});
+</script>
+
+<script>
+/* =====
+   TOOLS: participants' features live here.
+   Add each feature with registerTool({ id, title, description, render(container, api) }).
+   See "HOW TO ADD A FEATURE" at the top of the file.
+   ===== */
+
+/* Add new tools below this line */
+
+</script>
+</body>
+</html>
