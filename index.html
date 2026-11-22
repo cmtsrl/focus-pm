@@ -793,11 +793,15 @@ function parseRequest(text) {
   /* delivery */
   let days = NaN, mD;
   if ((mD = T.match(/(\d+)\s*working days/i))) { days = +mD[1]; mark(mD, 'delivery'); }
-  else if ((mD = T.match(/by (\d{1,2})\/(\d{1,2})/i))) { const d = new Date(today().getFullYear(), +mD[2] - 1, +mD[1]); days = Math.max(0.5, workingDaysBetween(today(), d)); mark(mD, 'delivery'); }
+  else if ((mD = T.match(/(?:within|in)\s+(\d+)\s*(?:calendar\s+)?days?\b/i))) { days = Math.max(0.5, workingDaysBetween(today(), addDays(today(), +mD[1]))); mark(mD, 'delivery'); }
+  else if ((mD = T.match(/by (\d{1,2})\/(\d{1,2})/i))) { let d = new Date(today().getFullYear(), +mD[2] - 1, +mD[1]); if (d < today()) d = new Date(d.getFullYear() + 1, d.getMonth(), d.getDate()); days = Math.max(0.5, workingDaysBetween(today(), d)); mark(mD, 'delivery'); }
   else if ((mD = T.match(/\bby (monday|tuesday|wednesday|thursday|friday)\b/i))) {
     const wd = WEEKDAYS[mD[1].toLowerCase()]; let d = addDays(today(), 1); while (d.getDay() !== wd) d = addDays(d, 1); days = Math.max(1, workingDaysBetween(today(), d)); mark(mD, 'delivery');
   } else if ((mD = T.match(/same[- ]day|by end of today|by tonight/i))) { days = 0.5; mark(mD, 'delivery'); }
   else if ((mD = T.match(/\btomorrow\b/i))) { days = 1; mark(mD, 'delivery'); }
+  const isDeadlineHours = m => /\b(?:within|in|next|under)\s+$/i.test(T.slice(Math.max(0, m.index - 12), m.index));
+  const mH = hrs.find(isDeadlineHours);
+  if (mH) { if (!isFinite(days)) days = Math.max(0.5, numDec(mH[1]) / 24); mark(mH, 'delivery'); }
   const mU = T.match(/\burgent\w*|\basap\b|as soon as possible|quick price/i); mark(mU, 'urgency');
   const cli = /\bagency\b|\bLSP\b/i.test(T) ? 'l' : 'd';
   /* lines */
@@ -806,6 +810,8 @@ function parseRequest(text) {
   if (words) P0.forEach(p => lines.push({ svc, pair: p, qty: Math.max(0, words - reps), rep: reps, days }));
   if (mM) { const s2 = /transcri/i.test(T) ? 'tra' : 'sub'; P0.forEach(p => lines.push({ svc: s2, pair: p, qty: +mM[1], rep: 0, days })); }
   hrs.forEach(m => {
+    /* "within 48 hours", "in 24 hours", "next 72 hours": a deadline, not hours of work */
+    if (isDeadlineHours(m)) return;
     const ctx = T.slice(Math.max(0, m.index - 60), m.index + 40);
     const s3 = /layout|DTP|InDesign|designer/i.test(ctx) ? 'dtp' : 'int';
     lines.push({ svc: s3, pair: s3 === 'dtp' ? '' : P0[0], qty: numDec(m[1]), rep: 0, days }); mark(m, s3 === 'dtp' ? 'DTP hours' : 'hours');
@@ -1222,7 +1228,7 @@ const ACTIONS = {
   skip() { $('#main').focus(); },
   reset() {
     openDialog({ title: 'Reset the demo data?', body: 'This restores the sample requests, vendors and parameters and deletes the quotes, traffic lights and notes saved in this browser.', actions: [
-      { label: 'Reset', primary: true, run() { state = seed(); store.del(DATA_KEY); TF = null; BSEL = null; area = ''; go('dashboard'); toast('Demo data restored'); } }, { label: 'Cancel' }] });
+      { label: 'Reset', primary: true, run() { state = seed(); store.del(DATA_KEY); TF = null; BSEL = null; area = ''; try { localStorage.removeItem('focuspm.area'); } catch (e) {} go('dashboard'); toast('Demo data restored'); } }, { label: 'Cancel' }] });
   },
   area(b) { area = b.dataset.area; try { localStorage.setItem('focuspm.area', area); } catch (e) {} render(false); },
   light(b) { setStatus(b.dataset.id, { light: b.dataset.st }); if (b.dataset.st === 'green') toast('Marked as done', { action: { label: 'Undo', run: () => setStatus(b.dataset.id, { light: 'amber' }) } }); },
