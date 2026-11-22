@@ -40,7 +40,7 @@ On Windows the command is `py -m http.server 8765`.
 | View | What it does |
 |---|---|
 | **Dashboard** | Today's requests read from email and Teams (simulated), sorted by urgency, with a red / amber / green traffic light and notes. Items that ask for a price have a **Prepare quote** button. |
-| **Quote window** | Opens on top of the dashboard and closes with the X or Esc. It reads the message by itself, highlights language pairs, volumes, delivery and urgency, and prices the job **by words, hours or minutes**, with margin and a draft reply. |
+| **Quote window** | Opens on top of the dashboard and closes with the X or Esc. It reads the message by itself, in English or Italian, highlights language pairs, volumes, delivery and urgency, and prices the job **by words, hours or minutes**, with margin and a draft reply. |
 | **Quotes** | Saved quotes with status (sent, won, lost) and win rate. You can also paste any text. |
 | **Rate calculator** | From resource costs to client price: TEP, translation only, MTPE, revision, rush, market cap and maximum acceptable cost. |
 | **Tender analyser** | The "wow" feature: reads tender documents from a simulated SharePoint folder, checks the requirements, estimates price and maximum discount, and shows a score, deadlines, risks and the document passages it used. |
