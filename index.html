@@ -865,11 +865,22 @@ function parseRequest(text) {
   const mM = mHM || T.match(/(\d+)\s*-?\s*(?:minutes?|mins?|minuti|minuto)\b/i); mark(mM, 'minutes');
   const minutes = mHM ? +mHM[1] * 60 + +mHM[2] : mM ? +mM[1] : 0;
   const hrs = [...T.matchAll(/(\d+(?:[.,]\d+)?)\s*(hours?|hrs?|ore|ora|h)\b/gi)].filter(m => !(mHM && m.index >= mHM.index && m.index < mHM.index + mHM[0].length));
-  /* service */
-  let svc = 'tep';
-  if (/post[\s-]?edit|\bMTPE\b|\bPEMT\b/i.test(T)) svc = 'mtpe';
-  else if (/revision only|proofreading only|review only|solo (?:la )?revisione|solo (?:la )?rilettura/i.test(T)) svc = 'rev';
-  else if (/translation only|without revision|solo (?:la )?traduzione|senza revisione/i.test(T)) svc = 'trad';
+  /* service: for the whole text, and for each part of it ("translate 500 words DE > IT and proofread 2,000 words EN > IT") */
+  const svcOf = x => {
+    if (/post[\s-]?edit|\bMTPE\b|\bPEMT\b/i.test(x)) return 'mtpe';
+    if (/translation only|without revision|solo (?:la )?traduzione|senza revisione/i.test(x)) return 'trad';
+    if (/revision only|proofreading only|review only|solo (?:la )?revisione|solo (?:la )?rilettura/i.test(x)) return 'rev';
+    if (/with (?:a |the )?(?:second )?revision|con (?:la )?revisione|translation \+ revision|\bTEP\b/i.test(x)) return 'tep';
+    const tr = /translat|tradu[zcr]/i.test(x), rv = /proof[\s-]?read|\brevis|\breview|revisione|rivedere|rilettura|rileggere|\bcorrezione bozze/i.test(x);
+    if (rv && !tr) return 'rev';
+    if (tr) return 'tep';
+    return null;
+  };
+  const svc = svcOf(T) || 'tep';
+  /* the part of the text around a position: up to the nearest full stop, semicolon, line break, "and", "e", "plus", "then" or a comma that is not inside a number */
+  const BOUND = /(?<!\d)[.;!?\n](?!\d)|[.;!?\n](?=\s)|\n|(?<!\d),|,(?!\d)|\s(?:and|e|ed|plus|più|then|poi|while|mentre)\s/gi;
+  const cuts = [0].concat([...T.matchAll(BOUND)].map(m => m.index)).concat([T.length]);
+  const partAt = i => { let a = 0, b = T.length; cuts.forEach(c => { if (c <= i && c > a) a = c; if (c > i && c < b) b = c; }); return T.slice(a, b); };
   const mSvc = T.match(/post[\s-]?editing|\bMTPE\b|translation with revision|translation|subtitling|subtitles|transcription|interpreter|interpreting|layout|\bDTP\b|traduzione|revisione|sottotitol\w*|trascrizione|interpretariato|interpret[ei]\b|impaginazione/i); mark(mSvc, 'service');
   /* delivery */
   const wdNames = Object.keys(WEEKDAYS).join('|'), mNames = Object.keys(MONTHS).sort((a, b) => b.length - a.length).join('|');
@@ -903,22 +914,27 @@ function parseRequest(text) {
   /* lines */
   const lines = [], P0 = pairs.length ? pairs : ['EN>IT'];
   /* one word count for all pairs; several counts are matched to the pairs in order ("5,000 words EN > FR, 3,000 words EN > ES"), otherwise to the closest pair */
-  const byPos = P0.slice().sort((a, b) => (pairAt[a] || 0) - (pairAt[b] || 0));
-  const wordsMatchFor = p => {
-    if (!mWs.length) return null;
-    if (mWs.length === 1 || pairAt[p] == null) return mWs[0];
-    if (mWs.length === byPos.length) return mWs[byPos.indexOf(p)];
-    return mWs.reduce((best, m) => Math.abs(m.index - pairAt[p]) < Math.abs(best.index - pairAt[p]) ? m : best);
-  };
+  const byPos = P0.slice().sort((a, b) => (pairAt[a] || 0) - (pairAt[b] || 0)), dist = (m, p) => Math.abs(m.index - (pairAt[p] || 0));
+  /* "2,000 words EN>FR and EN>DE, 1,000 words EN>ES": when counts come before pairs, a pair takes the last count written before it, otherwise the first one after it */
+  const countsFirst = mWs.length && pairs.length && mWs[0].index < (pairAt[byPos[0]] || 0);
+  const nearestCount = p => (countsFirst ? mWs.filter(m => m.index < pairAt[p]).pop() : mWs.find(m => m.index > pairAt[p])) || mWs.reduce((best, m) => dist(m, p) < dist(best, p) ? m : best);
+  const nearestPair = m => pairs.length ? byPos.reduce((best, p) => dist(m, p) < dist(m, best) ? p : best) : P0[0];
+  /* which word count goes with which pair: one count → every pair; as many counts as pairs → in order;
+     more counts than pairs (same pair, different services) → each count to its closest pair; fewer → each pair to its closest count */
+  const jobs = !mWs.length ? [] : mWs.length === 1 ? P0.map(p => ({ p, m: mWs[0] }))
+    : mWs.length === byPos.length && pairs.length ? byPos.map((p, i) => ({ p, m: mWs[i] }))
+    : mWs.length > P0.length ? mWs.map(m => ({ p: nearestPair(m), m }))
+    : P0.map(p => ({ p, m: nearestCount(p) }));
   /* repetitions belong to the word count written just before them */
   const repOwner = mR && mWs.length > 1 ? mWs.filter(m => m.index < mR.index).pop() || mWs[0] : null;
-  P0.forEach(p => {
-    const m = wordsMatchFor(p); if (!m) return;
+  jobs.forEach(({ p, m }) => {
     const w = wordsOf(m); if (!w) return;
     let r = mR && (!repOwner || repOwner === m) ? qn(mR[1]) : 0;
     if (r >= w) { warn.push('Repetitions (' + fmtNum(r) + ') are not fewer than the words (' + fmtNum(w) + '): repetitions ignored. Check the numbers.'); r = 0; }
     if (w > 1e6) warn.push('Very large volume (' + fmtNum(w) + ' words): check the number.');
-    lines.push({ svc, pair: p, qty: w - r, rep: r, days });
+    /* the service written next to this count wins over the one for the whole text */
+    const local = mWs.length > 1 ? svcOf(partAt(m.index)) || svcOf(pairAt[p] != null ? partAt(pairAt[p]) : '') : null;
+    lines.push({ svc: local || svc, pair: p, qty: w - r, rep: r, days });
   });
   if (minutes) { const s2 = /transcri|trascri/i.test(T) ? 'tra' : 'sub'; P0.forEach(p => lines.push({ svc: s2, pair: p, qty: minutes, rep: 0, days })); }
   hrs.forEach(m => {
