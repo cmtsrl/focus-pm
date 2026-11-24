@@ -817,6 +817,7 @@ function parseRequest(text) {
   const taken = [], free = m => !taken.some(t => m.index < t[1] && m.index + m[0].length > t[0]), take = m => taken.push([m.index, m.index + m[0].length]);
   for (const m of T.matchAll(new RegExp('\\b(' + codes + ')\\s*(<>|<->|↔|->|>|›|→|–|-|\\/)\\s*(' + codes + ')\\b', 'gi'))) {
     const a = codeOf(m[1]), b = codeOf(m[3]); if (a === b) continue;
+    if (/^[-–\/]$/.test(m[2]) && /\s/.test(m[0]) && (m[1] !== m[1].toUpperCase() || m[3] !== m[3].toUpperCase())) continue; /* "do it - de for us" */
     addPair(a + (/<>|<->|↔/.test(m[2]) ? '<>' : '>') + b, m.index); mark(m, 'pair'); take(m);
   }
   for (const m of T.matchAll(new RegExp('\\b(' + codes + ')\\s+(?:to|into|in|a|verso)\\s+(' + codes + ')\\b', 'g'))) {
@@ -835,9 +836,13 @@ function parseRequest(text) {
     }
   }
   if (!pairs.length) {
-    const TGT = new RegExp('(?:\\b(?:into|to|in|a|al|allo|verso)\\s+' + art + '|\\ball[\'’]|\\bverso\\s+l[\'’])(' + names + ')\\b((?:\\s*(?:,|\\band\\b|&|\\bed?\\b)\\s*(?:al\\s+|allo\\s+|all[\'’]|il\\s+|l[\'’]|in\\s+)?(?:' + names + ')\\b)*)', 'i');
+    /* "into / to / al / all'" are clear targets; "in / a" only count when no clear one is written ("we are a Spanish company… into Italian") */
+    const tgtRe = w => new RegExp('(?:\\b(?:' + w + ')\\s+' + art + (w === 'in|a' ? '' : '|\\ball[\'’]|\\bverso\\s+l[\'’]') + ')(' + names + ')\\b((?:\\s*(?:,|\\band\\b|&|\\bed?\\b)\\s*(?:al\\s+|allo\\s+|all[\'’]|il\\s+|l[\'’]|in\\s+)?(?:' + names + ')\\b)*)', 'i');
+    const TGT_STRONG = tgtRe('into|to|al|allo|verso'), TGT_WEAK = tgtRe('in|a');
+    const TGT = { [Symbol.match]: x => x.match(TGT_STRONG) || x.match(TGT_WEAK) };
     const targetsOf = tail => [tail[1]].concat(tail[2].match(new RegExp(names, 'gi')) || []).map(w => LANG_WORDS[w.toLowerCase()]);
-    const src = T.match(new RegExp('(?:\\bfrom\\s+|\\bdall[\'’]|\\bdal(?:lo)?\\s+|\\bda\\s+' + art + ')(' + names + ')\\b', 'i'));
+    const src = T.match(new RegExp('(?:\\bfrom\\s+|\\bdall[\'’]|\\bdal(?:lo)?\\s+|\\bda\\s+' + art + ')(' + names + ')\\b', 'i'))
+      || T.match(new RegExp('\\b(?:written|drafted|is|are|scritt[oaie]|redatt[oaie]|è)\\s+in\\s+' + art + '(' + names + ')\\b', 'i')); /* "the manual is written in German" */
     let S = null, tail = null, at = 0;
     if (src) {
       mark(src, 'from'); S = LANG_WORDS[src[1].toLowerCase()];
@@ -858,10 +863,14 @@ function parseRequest(text) {
   if (!pairs.length) warn.push('No language pair found in the text: EN › IT assumed. Check the pair on each line.');
   /* quantities */
   const qn = s => Math.round(numDec(s));
-  const mWs = [...T.matchAll(new RegExp(NUMRE + '\\s*(k)?\\s*(?:words|parole)\\b', 'gi'))]; mWs.forEach(m => mark(m, 'words'));
+  const repWords = m => /^[^.;\n\d]{0,25}?\b(?:repetitions?|reps|ripetizion[ei]|ripetut[ei])\b/i.test(T.slice(m.index + m[0].length)); /* "of which 500 words are repetitions" */
+  const allWs = [...T.matchAll(new RegExp(NUMRE + '\\s*(k)?\\s*(?:words|parole)\\b', 'gi'))];
+  const mWs = allWs.length > 1 ? allWs.filter(m => !repWords(m)) : allWs; mWs.forEach(m => mark(m, 'words'));
   const wordsOf = m => Math.round(numDec(m[1]) * (m[2] ? 1000 : 1)); /* 2k, 1.5k */
-  const mR = T.match(new RegExp(NUMRE + '\\s*(?:repetitions|reps|ripetizioni)\\b', 'i')); mark(mR, 'repetitions');
-  const mHM = T.match(/\b(\d+)\s*h\s*(\d{1,2})(?:\s*(?:minutes?|mins?|minuti|m)\b)?/i);
+  const mR = T.match(new RegExp(NUMRE + '\\s*(?:repetitions|reps|ripetizioni)\\b', 'i')) || (allWs.length > 1 ? allWs.find(repWords) : null) || null; mark(mR, 'repetitions');
+  const clockBefore = i => /\b(?:entro le|alle|dalle|by|at|before|until|prima delle|ore)\s*$/i.test(T.slice(Math.max(0, i - 14), i));
+  const mHM = [...T.matchAll(/\b(\d+)\s*h\s*(\d{1,2})(\s*(?:minutes?|mins?|minuti|m)\b)?(?!\s*\d)/gi)]
+    .find(m => !clockBefore(m.index) && (m[3] || /video|audio|film|clip|recording|registrazion|filmato|webinar|podcast/i.test(T.slice(m.index, m.index + m[0].length + 30))));
   const mM = mHM || T.match(/(\d+)\s*-?\s*(?:minutes?|mins?|minuti|minuto)\b/i); mark(mM, 'minutes');
   const minutes = mHM ? +mHM[1] * 60 + +mHM[2] : mM ? +mM[1] : 0;
   const hrs = [...T.matchAll(/(\d+(?:[.,]\d+)?)\s*(hours?|hrs?|ore|ora|h)\b/gi)].filter(m => !(mHM && m.index >= mHM.index && m.index < mHM.index + mHM[0].length));
@@ -885,29 +894,34 @@ function parseRequest(text) {
   /* delivery */
   const wdNames = Object.keys(WEEKDAYS).join('|'), mNames = Object.keys(MONTHS).sort((a, b) => b.length - a.length).join('|');
   const untilDate = d => Math.max(0.5, workingDaysBetween(today(), d));
-  let days = NaN, mD;
+  let days = NaN, mD, due = null;
   if ((mD = T.match(/(\d+)\s*(?:working days|business days|giorni lavorativi)/i))) { days = +mD[1]; mark(mD, 'delivery'); }
   else if ((mD = T.match(/(?:\bwithin|\bin|\bentro|\btra|\bfra)\s+(\d+)\s*(?:calendar\s+)?(days?|giorni|weeks?|settimane)(?![a-z])/i))) { days = untilDate(addDays(today(), +mD[1] * (/^(?:w|s)/i.test(mD[2]) ? 7 : 1))); mark(mD, 'delivery'); }
   else if ((mD = T.match(/(?:deliver\w*|deadline|turnaround|consegna|scadenza)\D{0,15}?(\d+)\s*(?:calendar\s+)?(?:days?|giorni)(?![a-z])/i))) { days = untilDate(addDays(today(), +mD[1])); mark(mD, 'delivery'); }
-  else if ((mD = T.match(/(?:^|[\s,.;:(])(\d+)\s*(?:calendar\s+)?(?:days?|giorni)(?![a-zàèéìòù])(?!\s*(?:of|di|da)\b)/i))) { days = untilDate(addDays(today(), +mD[1])); mark(mD, 'delivery'); } /* "2,000 words, 3 days" */
   else if ((mD = T.match(/(?:\bby|\bentro(?:\s+il)?|\bper\s+il|\bon|\bdue|\bdeadline:?|\bconsegna:?|\bdelivery:?)\s+(\d{1,2})\/(\d{1,2})\b/i))) {
     let dd = +mD[1], mm = +mD[2]; if (mm > 12 && dd <= 12) { const x = dd; dd = mm; mm = x; } /* 12/31 written the US way */
     const d = dateFrom(dd, mm);
-    if (d) { days = untilDate(d); mark(mD, 'delivery'); } else warn.push('The date ' + mD[1] + '/' + mD[2] + ' does not exist: delivery not set.');
+    if (d) { days = untilDate(d); due = d; mark(mD, 'delivery'); } else warn.push('The date ' + mD[1] + '/' + mD[2] + ' does not exist: delivery not set.');
   }
-  else if ((mD = T.match(new RegExp('\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(' + mNames + ')\\b|\\b(' + mNames + ')\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b', 'i')))) {
+  else if ((mD = [...T.matchAll(new RegExp('\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(' + mNames + ')\\b|\\b(' + mNames + ')\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b', 'gi'))]
+    .find(m => /\b(?:by|before|until|no later than|due|deadline|deliver\w*|ready|need\w*|entro|per il|consegna|scadenza|pront[oai]|serv[eo])\b[^.;\n]{0,20}$/i.test(T.slice(Math.max(0, m.index - 30), m.index))))) { /* "on 3 March" alone is not a deadline ("our CEO will be in Spain on 3 March") */
     const d = mD[1] ? dateFrom(+mD[1], MONTHS[mD[2].toLowerCase()]) : dateFrom(+mD[4], MONTHS[mD[3].toLowerCase()]);
-    if (d) { days = untilDate(d); mark(mD, 'delivery'); }
+    if (d) { days = untilDate(d); due = d; mark(mD, 'delivery'); }
   }
   else if ((mD = T.match(new RegExp('\\b(?:by|entro|per|on|next|this|before|for)\\s+(?:next\\s+|this\\s+|the\\s+)?(' + wdNames + ')(?![a-zàèéìòù])', 'i')))) {
-    const wd = WEEKDAYS[mD[1].toLowerCase()]; let d = addDays(today(), 1); while (d.getDay() !== wd) d = addDays(d, 1); days = Math.max(1, workingDaysBetween(today(), d)); mark(mD, 'delivery');
+    const wd = WEEKDAYS[mD[1].toLowerCase()]; let d = addDays(today(), 1); while (d.getDay() !== wd) d = addDays(d, 1); days = Math.max(1, workingDaysBetween(today(), d)); due = d; mark(mD, 'delivery');
   } else if ((mD = T.match(/end of (?:the |this )?week|fine settimana|entro la settimana/i))) { let d = today(); while (d.getDay() !== 5) d = addDays(d, 1); days = Math.max(0.5, workingDaysBetween(today(), d)); mark(mD, 'delivery'); }
   else if ((mD = T.match(/same[- ]day|by end of today|by tonight|in giornata|entro (?:oggi|stasera|fine giornata)|oggi stesso/i))) { days = 0.5; mark(mD, 'delivery'); }
   else if ((mD = T.match(/day after tomorrow|\bdopodomani\b/i))) { days = 2; mark(mD, 'delivery'); }
   else if ((mD = T.match(/\b(?:tomorrow|domani)\b/i))) { days = 1; mark(mD, 'delivery'); }
+  /* last resort, "2,000 words, 3 days": not "silent for 2 days", "3 days ago", "took 2 days" */
+  else if ((mD = [...T.matchAll(/(?:^|[\s,.;:(])(\d+)\s*(?:calendar\s+)?(?:days?|giorni)(?![a-zàèéìòù])(?!\s*(?:of|di|da|ago|fa|before|earlier|prima|late|in ritardo)\b)/gi)]
+    .find(m => !/\b(?:for|took|after|since|last|past|per|dopo|da|ultimi|scorsi)\s*$/i.test(T.slice(Math.max(0, m.index - 12), m.index + 1))))) { days = untilDate(addDays(today(), +mD[1])); mark(mD, 'delivery'); }
   /* "within 48 hours", "in 24h", "entro 48 ore": a deadline, not hours of work */
-  const isDeadlineHours = m => /\b(?:within|in|next|under|entro|tra|fra|nelle prossime)\s+$/i.test(T.slice(Math.max(0, m.index - 16), m.index));
-  const mH = hrs.find(isDeadlineHours);
+  const isDeadlineHours = m => { const b = T.slice(Math.max(0, m.index - 30), m.index);
+    return /(?:\b(?:within|in|next|under|entro|tra|fra|nelle prossime)|\b(?:turnaround|deadline|deliver\w*|consegna|scadenza|tempi di consegna)\b[^\d\n.;]{0,12})\s*$/i.test(b); };
+  const isReplyHours = m => /\b(?:reply|answer|respond|call|ring|get back|text|rispond\w*|richiama\w*|chiama\w*)\b[^\d\n.;]{0,15}$/i.test(T.slice(Math.max(0, m.index - 30), m.index)); /* "reply in 1 hour please" */
+  const mH = hrs.find(m => isDeadlineHours(m) && !isReplyHours(m));
   if (mH) { if (!isFinite(days)) days = Math.max(0.5, numDec(mH[1]) / 24); mark(mH, 'delivery'); }
   const mU = T.match(/\burgent\w*|\basap\b|as soon as possible|quick price|\burgenz\w*|al più presto|prima possibile|il prima possibile/i); mark(mU, 'urgency');
   const cli = /\bagency\b|\bLSP\b|\bagenzia\b/i.test(T) ? 'l' : 'd';
@@ -938,13 +952,15 @@ function parseRequest(text) {
   });
   if (minutes) { const s2 = /transcri|trascri/i.test(T) ? 'tra' : 'sub'; P0.forEach(p => lines.push({ svc: s2, pair: p, qty: minutes, rep: 0, days })); }
   hrs.forEach(m => {
-    if (isDeadlineHours(m) || /^h$/i.test(m[2])) return;
+    if (isDeadlineHours(m) || isReplyHours(m) || /^h$/i.test(m[2])) return;
     const ctx = T.slice(Math.max(0, m.index - 60), m.index + 40);
-    const s3 = /layout|DTP|InDesign|designer|impaginazione|grafic/i.test(ctx) ? 'dtp' : 'int';
+    const s3 = /layout|DTP|InDesign|designer|impaginazione|grafic/i.test(ctx) ? 'dtp' : /interpret|consecutiv|simultan|chuchotage|whisper|liaison|booth|cabina|di trattativa/i.test(ctx) ? 'int' : null;
+    if (!s3) return; /* "a 3 hour workshop", "a 2 hour meeting": hours in passing are not billable */
     const dm = T.slice(Math.max(0, m.index - 30), m.index).match(/(\d+)\s*(?:days?|giorni|giornate)\s*(?:of|da|di)\s*$/i); /* "2 days of 8 hours" */
     lines.push({ svc: s3, pair: s3 === 'dtp' ? '' : P0[0], qty: numDec(m[1]) * (dm ? +dm[1] : 1), rep: 0, days }); mark(m, s3 === 'dtp' ? 'DTP hours' : 'hours');
   });
-  return { lines, days, cli, urgent: !!mU, spans, pairs, warn: warn.filter((x, i) => warn.indexOf(x) === i), guessedPair: !pairs.length };
+  if (due) lines.forEach(l => { if (l.days === days) l.due = iso(due); });
+  return { lines, days, due: due ? iso(due) : null, cli, urgent: !!mU, spans, pairs, warn: warn.filter((x, i) => warn.indexOf(x) === i), guessedPair: !pairs.length };
 }
 function highlight(text, spans) {
   const ss = spans.slice().sort((a, b) => a.s - b.s), out = []; let pos = 0;
@@ -988,7 +1004,7 @@ function render(focus) {
   if (v.mount) v.mount(view.param);
   renderNav();
   if (draft != null && editing && $('#note-' + editing)) $('#note-' + editing).value = draft;
-  if (keep) { const t = main.querySelector(keep) || (ae.id && document.getElementById(ae.id)); if (t) t.focus({ preventScroll: true }); }
+  if (keep) { let t = main.querySelector(keep) || (ae.id && document.getElementById(ae.id)); const shut = t && t.closest && t.closest('details:not([open])'); if (shut) t = shut.querySelector('summary'); if (t) t.focus({ preventScroll: true }); }
   document.title = (v.title ? v.title + ' · ' : '') + 'FOCUS PM · CMT';
   if (focus) { window.scrollTo(0, 0); const h = main.querySelector('h1'); if (h) h.focus({ preventScroll: true }); }
 }
@@ -1162,7 +1178,7 @@ function renderQuoteCalc(anim) {
     renderQuoteCalc(false);
   }));
   $('#qm-cli').addEventListener('change', e => { QM.cli = e.target.value; renderQuoteCalc(false); });
-  $('#qm-days').addEventListener('change', e => { const v = numDec(e.target.value); QM.lines.forEach(l => l.days = v > 0 ? v : NaN); renderQuoteCalc(false); });
+  $('#qm-days').addEventListener('change', e => { const v = numDec(e.target.value); QM.lines.forEach(l => { l.days = v > 0 ? v : NaN; delete l.due; }); renderQuoteCalc(false); });
 }
 function replyText(res, total) {
   const ok = res.filter(r => r.ok), P = state.params;
@@ -1172,8 +1188,8 @@ function replyText(res, total) {
     const pair = r.line.pair ? ' ' + pairText(r.line.pair) : '';
     return '• ' + SERVICES[r.line.svc].label + pair + ': ' + fmtNum(r.line.qty) + ' ' + u + (r.line.rep ? ' + ' + fmtNum(r.line.rep) + ' repetitions at ' + P.repP + '%' : '') + ', ' + pr + ' = ' + fmtMoney(r.total);
   }).join('\n');
-  const urg = ok.find(r => r.u.pct), d = ok[0] && ok[0].line.days;
-  return 'Dear ' + (name || 'colleague') + ',\n\nthank you for your request. Please find our quote below:\n\n' + lines + '\n\nTotal: ' + fmtMoney(total) + ' (VAT excluded).' + (urg ? '\nThe price includes a ' + urg.u.pct + '% surcharge for the requested turnaround.' : '') + (d > 0 ? '\nDelivery: ' + (d < 1 ? 'same day' : 'within ' + d + ' working days of your confirmation') + '.' : '') + '\n\nThis quote is valid for 30 days. We look forward to your confirmation.\n\nKind regards,\nCMT Translations · Project Management';
+  const urg = ok.find(r => r.u.pct), d = ok[0] && ok[0].line.days, due = ok[0] && ok[0].line.due;
+  return 'Dear ' + (name || 'colleague') + ',\n\nthank you for your request. Please find our quote below:\n\n' + lines + '\n\nTotal: ' + fmtMoney(total) + ' (VAT excluded).' + (urg ? '\nThe price includes a ' + urg.u.pct + '% surcharge for the requested turnaround.' : '') + (due ? '\nDelivery: by ' + fmtDate(due, true) + ', if you confirm today.' : d > 0 ? '\nDelivery: ' + (d < 1 ? 'same day' : 'within ' + d + ' working days of your confirmation') + '.' : '') + '\n\nThis quote is valid for 30 days. We look forward to your confirmation.\n\nKind regards,\nCMT Translations · Project Management';
 }
 function saveQuote() {
   if (!QM || !QM.res) return;
@@ -1202,7 +1218,7 @@ function parseCosts(text) {
   ms.forEach((m, i) => {
     const seg = text.slice(m.index + m[0].length, i + 1 < ms.length ? ms[i + 1].index : text.length).split(/\n/)[0];
     const p = { pair: codeOf(m[1]) + '>' + codeOf(m[2]), tMin: NaN, tMax: NaN, rMin: NaN, rMax: NaN, pMin: NaN, pMax: NaN, mkt: NaN };
-    for (const r of seg.matchAll(/\b(trans\w*|trad\w*|tr|rev\w*|pe|mtpe|post[\w-]*)\b[^\d\n.,]{0,12}?(\d*[.,]\d+)(?:\s*[-–\/]\s*(\d*[.,]\d+))?/gi)) {
+    for (const r of seg.matchAll(/\b(trans\w*|trad\w*|tr|rev\w*|pe|mtpe|post[\w-]*)\b\.?[^\d\n.,]{0,12}?(\d*[.,]\d+)(?:\s*[-–\/]\s*(\d*[.,]\d+))?/gi)) {
       const k = /^t/i.test(r[1]) ? 't' : /^r/i.test(r[1]) ? 'r' : 'p', a = numDec(r[2]), b = r[3] ? numDec(r[3]) : a;
       p[k + 'Min'] = Math.min(a, b); p[k + 'Max'] = Math.max(a, b);
     }
@@ -1430,8 +1446,9 @@ function showError(err) {
   if (TOOL_ERRORS.indexOf(msg) < 0) TOOL_ERRORS.push(msg);
   try { toast('Something stopped with an error: ' + msg + '. The rest of FOCUS PM still works. If you just added a feature, ask Claude to fix it.'); } catch (e) {}
 }
-window.addEventListener('error', e => showError(e.error || e.message));
-window.addEventListener('unhandledrejection', e => showError(e.reason));
+const NOISE = /ResizeObserver loop|Script error\.?$/i;
+window.addEventListener('error', e => { if (NOISE.test(String(e.message)) || (e.filename && e.filename.split('#')[0] !== location.href.split('#')[0])) return; showError(e.error || e.message); });
+window.addEventListener('unhandledrejection', e => { if (!NOISE.test(String(e.reason && e.reason.message || e.reason))) showError(e.reason); });
 function registerTool(tool) {
   if (!tool || !tool.id || typeof tool.render !== 'function') { console.error('registerTool needs an id and a render function', tool); return; }
   const i = TOOLS.findIndex(t => t.id === tool.id);
