@@ -386,6 +386,8 @@ dialog.dlg::backdrop {background:rgba(26,26,26,.5);}
 dialog.dlg h2 {font-size:var(--t-lg);text-transform:none;letter-spacing:0;color:var(--ink);}
 dialog.dlg textarea {min-height:150px;margin:var(--s2) 0;}
 dialog.dlg ol.steps {margin:var(--s2) 0 0;padding-left:20px;}
+.import-tag {display:flex;justify-content:space-between;align-items:center;gap:var(--s2);flex-wrap:wrap;margin:-6px 0 var(--s3);font-size:var(--t-xs);color:var(--muted);}
+.import-tag span {font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--bordeaux);}
 dialog.dlg ol.steps li {margin:8px 0;line-height:1.45;}
 .dlg-actions {display:flex;gap:var(--s2);justify-content:flex-end;margin-top:var(--s4);}
 
@@ -1371,7 +1373,7 @@ const VIEWS = {
   },
   tools: {
     title: 'Tools',
-    html() { return '<header class="head"><div><h1 tabindex="-1">Tools</h1><p class="sub">Helpers that work with requests, quotes and vendors. Each empty slot is a feature you can add by describing it to Claude.</p></div><button type="button" class="btn primary" data-act="sendWork">Send my work</button></header><div class="tools" id="tool-list"></div><h2 style="margin-top:32px">Ideas to add</h2><div class="slots" id="tool-slots"></div>'; },
+    html() { return '<header class="head"><div><h1 tabindex="-1">Tools</h1><p class="sub">Helpers that work with requests, quotes and vendors. Each empty slot is a feature you can add by describing it to Claude.</p></div><div class="row-actions"><button type="button" class="btn" data-act="importWork">Import work</button><button type="button" class="btn primary" data-act="sendWork">Send my work</button></div><input type="file" id="import-files" accept=".html,.htm,text/html" multiple hidden></header><div class="tools" id="tool-list"></div><h2 style="margin-top:32px">Ideas to add</h2><div class="slots" id="tool-slots"></div>'; },
     mount() { mountTools(); }
   }
 };
@@ -1830,6 +1832,8 @@ const ACTIONS = {
   tenderQ(b) { const t = TENDERS.find(x => x.id === b.dataset.id), text = el('textarea', { 'aria-label': 'Clarification questions', rows: 12 }, tenderQuestions(t)); openDialog({ title: 'Clarification questions', body: el('div', {}, el('p', { class: 'sub' }, 'Draft built from the unmet requirements and the risks found in the tender.'), text), actions: [{ label: 'Copy', primary: true, run() { copyText(text.value, 'Questions copied.'); return false; } }, { label: 'Close' }] }); },
   idea(b) { showIdea(IDEAS.find(i => i.id === b.dataset.idea)); },
   sendWork() { showSendWork(); },
+  importWork() { const f = $('#import-files'); if (f) { f.value = ''; f.click(); } },
+  importRemove(b) { removeImport(b.dataset.key); },
   preview(b) { openPreview(b.dataset.id); },
   pvClose() { closePreview(); }
 };
@@ -1916,12 +1920,80 @@ function showSendWork() {
       .concat([{ label: 'Copy the request for Claude', run() { copyText(ask, 'Copied. Paste it into Claude and change your name.'); return false; } }, { label: 'Close' }])
   });
 }
+/* ---------- Import work: features from participants' copies of FOCUS PM ---------- */
+const IMPORTS_KEY = 'focuspm.imports';
+function importAuthor(name, n) {
+  const a = String(name || '').replace(/\.html?$/i, '').replace(/focus[-_ ]?pm[-_ ]?/ig, '').replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return a && !/^index( \(\d+\))?$/i.test(a) ? a : 'Participant ' + n;
+}
+/* the participant's TOOLS script and the CSS under TOOL STYLES */
+function importParts(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const scripts = [...doc.querySelectorAll('script')].map(x => x.textContent);
+  let code = scripts.filter(x => /TOOLS: participants' features live here/.test(x)).pop();
+  if (code == null) code = scripts.filter(x => /registerTool\s*\(/.test(x) && !/function registerTool/.test(x)).pop() || '';
+  const css = [...doc.querySelectorAll('style')].map(x => x.textContent).join('\n'), cut = css.indexOf('TOOL STYLES');
+  return { code, css: cut < 0 ? '' : css.slice(css.indexOf('*/', cut) + 2) };
+}
+/* runs a participant's code: each registerTool call is renamed with the author, so nothing replaces your own tools */
+function runImport(it) {
+  const slug = it.author.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'p';
+  let n = 0;
+  const reg = tool => {
+    if (!tool || typeof tool !== 'object') return registerTool(tool);
+    n++;
+    registerTool(Object.assign({}, tool, { id: 'imp-' + slug + '-' + String(tool.id || n), title: (tool.title || tool.id || 'Feature') + ' · ' + it.author, importKey: it.key, importFile: it.file }));
+  };
+  document.querySelectorAll('style[data-import]').forEach(x => { if (x.dataset.import === it.key) x.remove(); });
+  if (it.css.trim()) document.head.append(el('style', { 'data-import': it.key }, it.css));
+  try { new Function('registerTool', it.code)(reg); }
+  catch (e) { console.error('Imported work "' + it.file + '" failed:', e); showError('The work imported from ' + it.file + ' stopped with an error: ' + (e && e.message || e)); }
+  return n;
+}
+function readImports() { const v = store.get(IMPORTS_KEY); return Array.isArray(v) ? v.filter(x => x && typeof x.key === 'string' && typeof x.code === 'string') : []; }
+function importFiles(files) {
+  if (!files.length) return;
+  const list = readImports(); let done = 0, found = 0, empty = [];
+  files.forEach((f, i) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const parts = importParts(String(r.result || ''));
+      const it = { key: 'k' + Date.now().toString(36) + i, file: f.name, author: importAuthor(f.name, list.length + i + 1), code: parts.code, css: parts.css };
+      if (!/registerTool\s*\(/.test(it.code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, ''))) empty.push(f.name);
+      else {
+        const old = list.findIndex(x => x.file === f.name);
+        if (old >= 0) { removeImport(list[old].key, true); list.splice(old, 1); }
+        list.push(it); found += runImport(it);
+      }
+      if (++done === files.length) {
+        if (!store.set(IMPORTS_KEY, list)) toast('The imported work is shown now, but it is too big to keep after a reload.');
+        toast((found ? found + ' feature' + (found > 1 ? 's' : '') + ' imported.' : 'No feature imported.') + (empty.length ? ' No features found in: ' + empty.join(', ') + '.' : ''));
+        render(false);
+      }
+    };
+    r.onerror = () => { empty.push(f.name); if (++done === files.length) { toast('Could not read: ' + empty.join(', ')); render(false); } };
+    r.readAsText(f);
+  });
+}
+function removeImport(key, quiet) {
+  for (let i = TOOLS.length - 1; i >= 0; i--) if (TOOLS[i].importKey === key) TOOLS.splice(i, 1);
+  document.querySelectorAll('style[data-import]').forEach(x => { if (x.dataset.import === key) x.remove(); });
+  if (quiet) return;
+  const list = readImports(), it = list.find(x => x.key === key);
+  store.set(IMPORTS_KEY, list.filter(x => x.key !== key));
+  toast(it ? 'Removed the work imported from ' + it.file + '.' : 'Removed.');
+  render(false);
+}
+/* imported work comes back after a reload, once every script of the page has run */
+function loadImports() { readImports().forEach(runImport); if (view.name === 'tools') render(false); }
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', loadImports); else setTimeout(loadImports, 0);
 function mountTools() {
   toolListeners = [];
+  const inp = $('#import-files'); if (inp) inp.onchange = () => { importFiles([...inp.files]); };
   const list = $('#tool-list'), slots = $('#tool-slots');
   TOOLS.forEach(t => {
     const body = el('div', { class: 'tool-body' });
-    list.append(el('section', { class: 'panel tool', 'aria-labelledby': 'tool-' + t.id }, el('h2', { id: 'tool-' + t.id }, t.title || t.id), t.description ? el('p', { class: 'sub', style: 'margin:-6px 0 16px' }, t.description) : null, body));
+    list.append(el('section', { class: 'panel tool', 'aria-labelledby': 'tool-' + t.id }, t.importKey ? el('div', { class: 'import-tag' }, el('span', {}, 'Imported from ' + t.importFile), el('button', { type: 'button', class: 'btn small', 'data-act': 'importRemove', 'data-key': t.importKey, 'aria-label': 'Remove the work imported from ' + t.importFile }, 'Remove')) : null, el('h2', { id: 'tool-' + t.id }, t.title || t.id), t.description ? el('p', { class: 'sub', style: 'margin:-6px 0 16px' }, t.description) : null, body));
     drawingTools = true;
     try { t.render(body, makeApi()); }
     catch (e) {
