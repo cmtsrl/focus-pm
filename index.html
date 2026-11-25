@@ -385,6 +385,8 @@ dialog.dlg {border:1px solid var(--rule);border-radius:var(--r-lg);padding:var(-
 dialog.dlg::backdrop {background:rgba(26,26,26,.5);}
 dialog.dlg h2 {font-size:var(--t-lg);text-transform:none;letter-spacing:0;color:var(--ink);}
 dialog.dlg textarea {min-height:150px;margin:var(--s2) 0;}
+dialog.dlg ol.steps {margin:var(--s2) 0 0;padding-left:20px;}
+dialog.dlg ol.steps li {margin:8px 0;line-height:1.45;}
 .dlg-actions {display:flex;gap:var(--s2);justify-content:flex-end;margin-top:var(--s4);}
 
 .toasts {position:fixed;bottom:20px;right:20px;display:grid;gap:8px;z-index:1000;}
@@ -512,6 +514,8 @@ const store = {
   del(k) { try { localStorage.removeItem(k); } catch (e) {} }
 };
 const DATA_KEY = 'focuspm.en.v1';
+/* Where participants send their finished work: the presenter's upload page (for example a OneDrive "Request files" link). Empty: the Send my work window says the link is shared in the room. */
+const SEND_WORK_URL = 'https://cmtcongressi-my.sharepoint.com/:f:/g/personal/tony_dangelo_cmt-translations_com/IgBWq_1nrx-QSqyzMbvx6UW-AeMu-UNuU57V1yDQU9XG_1w';
 
 /* ---------- Dates (Italian public holidays are not working days) ---------- */
 const DAY = 864e5;
@@ -1354,7 +1358,7 @@ const VIEWS = {
   },
   tools: {
     title: 'Tools',
-    html() { return '<header class="head"><div><h1 tabindex="-1">Tools</h1><p class="sub">Helpers that work with requests, quotes and vendors. Each empty slot is a feature you can add by describing it to Claude.</p></div></header><div class="tools" id="tool-list"></div><h2 style="margin-top:32px">Ideas to add</h2><div class="slots" id="tool-slots"></div>'; },
+    html() { return '<header class="head"><div><h1 tabindex="-1">Tools</h1><p class="sub">Helpers that work with requests, quotes and vendors. Each empty slot is a feature you can add by describing it to Claude.</p></div><button type="button" class="btn primary" data-act="sendWork">Send my work</button></header><div class="tools" id="tool-list"></div><h2 style="margin-top:32px">Ideas to add</h2><div class="slots" id="tool-slots"></div>'; },
     mount() { mountTools(); }
   }
 };
@@ -1800,6 +1804,7 @@ const ACTIONS = {
   },
   tenderQ(b) { const t = TENDERS.find(x => x.id === b.dataset.id), text = el('textarea', { 'aria-label': 'Clarification questions', rows: 12 }, tenderQuestions(t)); openDialog({ title: 'Clarification questions', body: el('div', {}, el('p', { class: 'sub' }, 'Draft built from the unmet requirements and the risks found in the tender.'), text), actions: [{ label: 'Copy', primary: true, run() { copyText(text.value, 'Questions copied.'); return false; } }, { label: 'Close' }] }); },
   idea(b) { showIdea(IDEAS.find(i => i.id === b.dataset.idea)); },
+  sendWork() { showSendWork(); },
   preview(b) { openPreview(b.dataset.id); },
   pvClose() { closePreview(); }
 };
@@ -1867,6 +1872,23 @@ function showIdea(idea) {
     title: idea ? idea.title : 'Your own idea',
     body: el('div', {}, el('p', {}, 'Change any detail you like, then copy the request and paste it into Claude (the Code tab, with the FOCUS PM folder open).'), text),
     actions: [{ label: 'Copy request', primary: true, run() { copyText(text.value, 'Request copied. Paste it into the chat.'); return false; } }, { label: 'Close' }]
+  });
+}
+/* Send my work: how a participant sends the finished file to the presenter */
+function showSendWork() {
+  const mine = TOOLS.map(t => t.title || t.id);
+  const url = /^https:\/\//i.test(SEND_WORK_URL) ? SEND_WORK_URL : '';
+  const ask = 'Make a copy of index.html on my Desktop and name it FOCUS-PM-your-name.html';
+  const body = el('div', {},
+    el('p', {}, mine.length ? 'Your features: ' + mine.join(', ') + '. They are all saved in one file, index.html, in the folder you downloaded.' : 'You have not added a feature yet. When you do, it is saved in index.html, in the folder you downloaded.'),
+    el('ol', { class: 'steps' },
+      el('li', {}, 'Make a copy of index.html and rename it with your name, for example FOCUS-PM-Maria-Rossi.html. Or ask Claude: “' + ask + '”.'),
+      el('li', {}, url ? 'Press Open the upload page and upload that file. Nobody else can see what you upload.' : 'Upload that file with the link the presenter shares in the room.')));
+  openDialog({
+    title: 'Send my work',
+    body,
+    actions: (url ? [{ label: 'Open the upload page', primary: true, run() { const w = window.open(url, '_blank', 'noopener'); if (!w) copyText(url, 'Upload link copied: paste it into your browser.'); return false; } }] : [])
+      .concat([{ label: 'Copy the request for Claude', run() { copyText(ask, 'Copied. Paste it into Claude and change your name.'); return false; } }, { label: 'Close' }])
   });
 }
 function mountTools() {
