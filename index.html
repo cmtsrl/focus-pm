@@ -477,6 +477,22 @@ dialog.dlg textarea {min-height:150px;margin:var(--s2) 0;}
 .deadline-legend i {width:12px;height:12px;border-radius:3px;display:inline-block;border:1px solid var(--rule);}
 
 /* ===== TOOL STYLES: add CSS for tools below this line ===== */
+.deadline-opts {display:grid;grid-template-columns:repeat(3, minmax(0,220px));gap:12px;}
+@media (max-width: 760px) { .deadline-opts {grid-template-columns:1fr;} }
+.deadline-big {margin:18px 0 4px;display:flex;flex-direction:column;gap:2px;}
+.deadline-big span {font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:700;}
+.deadline-big b {font-size:28px;color:var(--bordeaux);}
+.deadline-strip {display:flex;flex-wrap:wrap;gap:4px;margin:14px 0 8px;}
+.deadline-day {width:38px;border-radius:6px;padding:4px 0;text-align:center;font-size:11px;border:1px solid var(--rule);}
+.deadline-day span {display:block;opacity:.8;}
+.deadline-day b {font-size:14px;}
+.deadline-work {background:var(--bordeaux);color:#fff;border-color:var(--bordeaux);}
+.deadline-rev {background:var(--bordeaux-soft);color:var(--bordeaux);border-color:var(--bordeaux);}
+.deadline-weekend {background:var(--paper);color:var(--muted);}
+.deadline-holiday {background:#FFF3CC;color:#5E4300;border-color:var(--amber);}
+.deadline-legend {display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);}
+.deadline-legend span {display:inline-flex;gap:5px;align-items:center;}
+.deadline-legend i {width:12px;height:12px;border-radius:3px;display:inline-block;border:1px solid var(--rule);}
 
 </style>
 </head>
@@ -2280,6 +2296,63 @@ registerPreview({
    ===== */
 
 /* Add new tools below this line */
+
+/* Delivery date calculator: volume ÷ daily throughput, counted in working days (weekends and Italian holidays skipped). */
+registerTool({
+  id: 'deadline',
+  title: 'Delivery date calculator',
+  description: 'Enter the volume and the service: it suggests a delivery date, skipping weekends and Italian public holidays.',
+  render(container, api) {
+    /* name, throughput per day, extra days, unit, what the extra days are for, default volume (demo values) */
+    const SVCS = {
+      tep: ['Translation + revision', 2500, 1, 'words', 'revision', 12000],
+      trad: ['Translation only', 2500, 0, 'words', '', 12000],
+      mtpe: ['MT post-editing + revision', 5000, 1, 'words', 'revision', 12000],
+      rev: ['Revision only', 6000, 0, 'words', '', 12000],
+      sub: ['Subtitling', 40, 1, 'minutes', 'quality check', 90],
+      tra: ['Transcription', 60, 0, 'minutes', '', 90]
+    };
+    const vol = api.el('input', { id: 'deadline-vol', type: 'number', min: '0', value: '12000' });
+    const volLabel = api.el('label', { for: 'deadline-vol' }, 'Words');
+    const svc = api.el('select', { id: 'deadline-svc' }, Object.keys(SVCS).map(k => api.el('option', { value: k }, SVCS[k][0])));
+    const start = api.el('input', { id: 'deadline-start', type: 'date', value: api.iso(api.today()) });
+    const out = api.el('div', { class: 'deadline-out', 'aria-live': 'polite' });
+    let unit = 'words';
+    function draw() {
+      const [name, perDay, extraDays, u, extraName] = SVCS[svc.value];
+      const raw = Number(vol.value), q = Math.ceil(raw), max = u === 'words' ? 2000000 : 20000, y = Number(String(start.value).slice(0, 4));
+      if (!(raw > 0)) { out.replaceChildren(api.el('p', { class: 'empty' }, 'Enter a volume above 0.')); return; }
+      if (q > max) { out.replaceChildren(api.el('p', { class: 'warnbox bad', role: 'alert' }, 'That is more than ' + api.formatNumber(max) + ' ' + u + ': split the job into batches and plan each one.')); return; }
+      if (start.value && !(y >= 2000 && y <= 2100)) { out.replaceChildren(api.el('p', { class: 'warnbox bad', role: 'alert' }, 'Pick a start date between the years 2000 and 2100.')); return; }
+      const work = Math.max(1, Math.ceil(q / perDay)), extra = extraDays, total = work + extra;
+      const from = start.value || api.iso(api.today()), due = api.addWorkingDays(from, total);
+      const strip = [], skipped = [];
+      let d = new Date(api.addWorkingDays(from, 0)), n = 0;
+      while (d < due && strip.length < 70) { /* at most 70 day boxes */
+        d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
+        const prev = new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1), wk = api.iso(api.addWorkingDays(prev, 1)) === api.iso(d);
+        const we = d.getDay() === 0 || d.getDay() === 6, kind = wk ? (++n <= work ? 'work' : 'rev') : we ? 'weekend' : 'holiday';
+        if (kind === 'holiday') skipped.push(api.formatDate(d));
+        strip.push(api.el('div', { class: 'deadline-day deadline-' + kind, title: d.toDateString() + ' · ' + (kind === 'rev' ? extraName : kind) }, api.el('span', {}, d.toLocaleDateString('en-GB', { weekday: 'narrow' })), api.el('b', {}, d.getDate())));
+      }
+      out.replaceChildren(
+        api.el('p', { class: 'deadline-big' }, api.el('span', {}, 'Delivery'), api.el('b', {}, due.toLocaleDateString('en-GB', Object.assign({ weekday: 'long', day: 'numeric', month: 'long' }, due.getFullYear() !== api.today().getFullYear() ? { year: 'numeric' } : {})))),
+        api.el('p', { class: 'sub' }, api.formatNumber(q) + ' ' + u + ' at ' + api.formatNumber(perDay) + ' ' + u + ' a day = ' + work + ' working day' + (work > 1 ? 's' : '') + (extra ? ' + ' + extra + ' day for ' + extraName : '') + '. ' + (skipped.length ? 'Public holiday skipped: ' + skipped.join(', ') + '.' : 'No public holidays in between.')),
+        api.el('div', { class: 'deadline-strip' }, strip), d < due ? api.el('p', { class: 'hint' }, 'The calendar shows the first 70 days only.') : '',
+        api.el('div', { class: 'deadline-legend' }, [['work', u === 'minutes' ? name.toLowerCase() : 'work'], ['rev', extraName || 'check'], ['weekend', 'weekend'], ['holiday', 'holiday']].map(([k, l]) => api.el('span', {}, api.el('i', { class: 'deadline-' + k }), l))),
+        api.el('p', { class: 'hint' }, 'Daily throughput is a demo value: ' + Object.values(SVCS).map(s => s[0].toLowerCase() + ' ' + api.formatNumber(s[1]) + ' ' + s[3]).join(', ') + '.'));
+    }
+    svc.addEventListener('change', () => {
+      const s = SVCS[svc.value];
+      if (s[3] !== unit) { unit = s[3]; vol.value = s[5]; vol.step = unit === 'words' ? '100' : '5'; volLabel.textContent = unit === 'words' ? 'Words' : 'Minutes of audio or video'; }
+      draw();
+    });
+    [vol, start].forEach(x => x.addEventListener('input', draw));
+    const f = (label, el) => api.el('div', { class: 'field' }, label, el);
+    container.append(api.el('div', { class: 'deadline-opts' }, f(volLabel, vol), f(api.el('label', { for: 'deadline-svc' }, 'Service'), svc), f(api.el('label', { for: 'deadline-start' }, 'Start date'), start)), out);
+    draw();
+  }
+});
 
 </script>
 </body>
