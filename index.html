@@ -477,6 +477,17 @@ dialog.dlg textarea {min-height:150px;margin:var(--s2) 0;}
 .deadline-legend i {width:12px;height:12px;border-radius:3px;display:inline-block;border:1px solid var(--rule);}
 
 /* ===== TOOL STYLES: add CSS for tools below this line ===== */
+.risk-h {font-size:var(--t-sm);margin:8px 0;}
+.risk-list {list-style:none;margin:0 0 16px;padding:0;display:grid;gap:10px;}
+.risk-row {display:grid;grid-template-columns:64px minmax(0,1fr);gap:14px;align-items:center;}
+.risk-top .risk-row {border:1px solid var(--rule);border-radius:var(--r-md);padding:12px;}
+.risk-score {border-radius:8px;padding:6px 0;text-align:center;color:#fff;}
+.risk-score b {display:block;font-size:22px;line-height:1;}
+.risk-score span {font-size:10px;text-transform:uppercase;letter-spacing:.06em;}
+.risk-track {height:8px;background:var(--paper);border-radius:4px;overflow:hidden;margin:6px 0 2px;}
+.risk-track i {display:block;height:100%;border-radius:4px;}
+.risk-high {background:var(--red);} .risk-mid {background:var(--amber);} .risk-low {background:var(--green);}
+.risk-score.risk-mid {color:#1A1A1A;}
 
 </style>
 </head>
@@ -2280,6 +2291,47 @@ registerPreview({
    ===== */
 
 /* Add new tools below this line */
+
+/* Predictive delay light: a 0–100 delay risk for each open dashboard item, with the reasons. */
+registerTool({
+  id: 'risk',
+  title: 'Predictive delay light',
+  description: 'Estimates which open items may slip, so you can act before it happens.',
+  render(container, api) {
+    function assess(r, quotes) {
+      const d = api.daysUntil(r.due), why = [];
+      let s = d < 0 ? 60 : d === 0 ? 45 : d === 1 ? 35 : d === 2 ? 25 : d <= 5 ? 15 : 5;
+      why.push(d < 0 ? 'already overdue' : d === 0 ? 'due today' : d === 1 ? 'due tomorrow' : 'due in ' + d + ' days');
+      if (r.light === 'red') { s += 20; why.push('not started'); } else if (r.light === 'amber') { s += 8; why.push('in progress'); }
+      if (r.section === 'waiting') { s += 15; why.push('waiting for someone else'); }
+      if (r.quote && !quotes.some(q => q.reqId === r.id)) { s += 10; why.push('quote not prepared'); }
+      if (/silent|not respond|no reply/i.test(r.title + ' ' + r.why)) { s += 10; why.push('no reply from the other side'); }
+      if (r.area === 'Production') { s += 5; why.push('production job'); }
+      return { r, score: Math.min(100, s), why };
+    }
+    const level = s => s >= 70 ? ['high', 'High'] : s >= 45 ? ['mid', 'Medium'] : ['low', 'Low'];
+    const host = api.el('div');
+    function draw() {
+      const quotes = api.getQuotes();
+      const list = api.getRequests().filter(r => r.light !== 'green').map(r => assess(r, quotes)).sort((a, b) => b.score - a.score);
+      const top = list.slice(0, 3), rest = list.slice(3);
+      const row = x => {
+        const [cls, lbl] = level(x.score);
+        return api.el('li', { class: 'risk-row' },
+          api.el('div', { class: 'risk-score risk-' + cls }, api.el('b', {}, x.score), api.el('span', {}, lbl)),
+          api.el('div', {}, api.el('strong', {}, x.r.title), api.el('div', { class: 'risk-track' }, api.el('i', { class: 'risk-' + cls, style: 'width:' + x.score + '%' })), api.el('p', { class: 'sub' }, 'Why: ' + x.why.join(', ') + '.')));
+      };
+      const parts = [api.el('h3', { class: 'risk-h' }, 'Most at risk'),
+        top.length ? api.el('ol', { class: 'risk-list risk-top' }, top.map(row)) : api.el('p', { class: 'empty' }, 'Nothing open: every dashboard item is done.')];
+      if (rest.length) parts.push(api.el('h3', { class: 'risk-h' }, 'Everything else'), api.el('ol', { class: 'risk-list' }, rest.map(row)));
+      parts.push(api.el('p', { class: 'hint' }, 'Score = time to deadline + traffic light + waiting on others + missing quote. Change a traffic light on the dashboard and the ranking updates.'));
+      host.replaceChildren(...parts);
+    }
+    container.append(host);
+    draw();
+    api.onChange(draw);
+  }
+});
 
 </script>
 </body>
