@@ -477,6 +477,15 @@ dialog.dlg textarea {min-height:150px;margin:var(--s2) 0;}
 .deadline-legend i {width:12px;height:12px;border-radius:3px;display:inline-block;border:1px solid var(--rule);}
 
 /* ===== TOOL STYLES: add CSS for tools below this line ===== */
+.briefing-text {margin-top:16px;border-left:3px solid var(--bordeaux);padding:4px 0 4px 14px;font-size:var(--t-md);}
+.briefing-text p {margin:0 0 6px;color:var(--muted);transition:color .2s;}
+.briefing-text p.briefing-now {color:var(--ink);font-weight:700;}
+.briefing-wave {display:inline-flex;gap:3px;align-items:center;height:22px;margin-left:6px;}
+.briefing-wave i {width:4px;height:6px;background:var(--rule);border-radius:2px;}
+.briefing-wave.on i {background:var(--bordeaux);animation:briefing-bar .9s ease-in-out infinite;}
+.briefing-wave.on i:nth-child(2) {animation-delay:.1s;} .briefing-wave.on i:nth-child(3) {animation-delay:.2s;}
+.briefing-wave.on i:nth-child(4) {animation-delay:.3s;} .briefing-wave.on i:nth-child(5) {animation-delay:.4s;}
+@keyframes briefing-bar {50% {height:22px;}}
 
 </style>
 </head>
@@ -2280,6 +2289,58 @@ registerPreview({
    ===== */
 
 /* Add new tools below this line */
+
+/* Spoken morning briefing: reads the urgent dashboard items aloud with the browser's speech synthesis. */
+registerTool({
+  id: 'briefing',
+  title: 'Spoken morning briefing',
+  description: 'Press Listen and the browser reads out the urgent items on the dashboard.',
+  render(container, api) {
+    const speech = 'speechSynthesis' in window ? window.speechSynthesis : null;
+    const text = api.el('div', { class: 'briefing-text', 'aria-live': 'polite' });
+    const listen = api.el('button', { type: 'button', class: 'btn primary' }, '▶ Listen');
+    const stop = api.el('button', { type: 'button', class: 'btn', disabled: true }, '■ Stop');
+    const wave = api.el('span', { class: 'briefing-wave', 'aria-hidden': 'true' }, [1, 2, 3, 4, 5].map(() => api.el('i')));
+
+    const whenText = iso => { const d = api.daysUntil(iso); return d < 0 ? 'overdue' : d === 0 ? 'due today' : d === 1 ? 'due tomorrow' : 'due ' + api.formatDate(iso); };
+    function script() {
+      const urgent = api.getRequests().filter(r => r.section === 'urgent' && r.light !== 'green').sort((a, b) => a.due.localeCompare(b.due));
+      const h = new Date().getHours(), hello = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+      if (!urgent.length) return [hello + '.', 'Nothing urgent on the dashboard right now. Enjoy the calm.'];
+      const lines = [hello + '.', 'You have ' + urgent.length + ' urgent item' + (urgent.length > 1 ? 's' : '') + '.'];
+      urgent.slice(0, 3).forEach((r, i) => {
+        lines.push(['First', 'Second', 'Third'][i] + ': ' + r.title.replace(/<>/g, 'and').replace(/>/g, 'to') + ', ' + whenText(r.due) + '.' + (r.action ? ' Next step: ' + r.action : ''));
+      });
+      if (urgent.length > 3) lines.push('And ' + (urgent.length - 3) + ' more on the dashboard.');
+      return lines;
+    }
+    function show(active) {
+      text.replaceChildren(...script().map((l, i) => api.el('p', { class: i === active ? 'briefing-now' : '' }, l)));
+    }
+    function setPlaying(on) { listen.disabled = on; stop.disabled = !on; wave.classList.toggle('on', on); }
+
+    listen.addEventListener('click', () => {
+      const lines = script();
+      show(-1);
+      if (!speech) { api.toast('This browser cannot speak: the text is shown below.'); return; }
+      speech.cancel();
+      const voices = speech.getVoices(), voice = voices.find(v => /en-GB/i.test(v.lang)) || voices.find(v => /^en/i.test(v.lang));
+      lines.forEach((l, i) => {
+        const u = new SpeechSynthesisUtterance(l);
+        u.lang = 'en-GB'; if (voice) u.voice = voice; u.rate = 1;
+        u.onstart = () => show(i);
+        if (i === lines.length - 1) u.onend = () => { setPlaying(false); show(-1); };
+        speech.speak(u);
+      });
+      setPlaying(true);
+    });
+    stop.addEventListener('click', () => { if (speech) speech.cancel(); setPlaying(false); show(-1); });
+
+    container.append(api.el('div', { class: 'row-actions' }, listen, stop, wave), text);
+    show(-1);
+    api.onChange(() => { if (stop.disabled) show(-1); });
+  }
+});
 
 </script>
 </body>
