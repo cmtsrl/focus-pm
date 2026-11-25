@@ -1896,7 +1896,7 @@ function showSendWork() {
   openDialog({
     title: 'Send my work',
     body,
-    actions: (url ? [{ label: 'Open the upload page', primary: true, run() { const w = window.open(url, '_blank', 'noopener'); if (!w) copyText(url, 'Upload link copied: paste it into your browser.'); return false; } }] : [])
+    actions: (url ? [{ label: 'Open the upload page', primary: true, run() { let w = null; try { w = window.open(url, '_blank'); } catch (e) {} if (w) { try { w.opener = null; } catch (e) {} } else copyText(url, 'Upload link copied: paste it into your browser.'); return false; } }] : [])
       .concat([{ label: 'Copy the request for Claude', run() { copyText(ask, 'Copied. Paste it into Claude and change your name.'); return false; } }, { label: 'Close' }])
   });
 }
