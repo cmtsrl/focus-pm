@@ -477,6 +477,14 @@ dialog.dlg textarea {min-height:150px;margin:var(--s2) 0;}
 .deadline-legend i {width:12px;height:12px;border-radius:3px;display:inline-block;border:1px solid var(--rule);}
 
 /* ===== TOOL STYLES: add CSS for tools below this line ===== */
+.capacity-summary {margin:12px 0;font-size:var(--t-sm);}
+.capacity-grid {border-collapse:separate;border-spacing:3px;font-size:12px;font-variant-numeric:tabular-nums;}
+.capacity-grid th {font-size:11px;color:var(--muted);font-weight:700;padding:2px 6px;text-align:center;}
+.capacity-grid tbody th {text-align:left;color:var(--ink);font-size:13px;white-space:nowrap;padding-right:12px;}
+.capacity-grid tbody th .sub {display:block;font-weight:400;font-size:11px;margin:0;}
+.capacity-grid td {width:44px;height:34px;text-align:center;border-radius:4px;font-weight:700;}
+.capacity-grid td.num {background:none;color:var(--ink);}
+.capacity-grid tr.capacity-off {opacity:.25;}
 
 </style>
 </head>
@@ -2280,6 +2288,64 @@ registerPreview({
    ===== */
 
 /* Add new tools below this line */
+
+/* Vendor capacity radar: vendors × next 10 working days, shaded by workload (invented). */
+registerTool({
+  id: 'capacity',
+  title: 'Vendor capacity radar',
+  description: 'Workload for the next 10 working days. Pick a language pair to see who covers it and who has the most room.',
+  render(container, api) {
+    const vendors = api.getVendors();
+    const days = [];
+    for (let i = 1; i <= 10; i++) days.push(api.addWorkingDays(api.today(), i));
+    /* invented but stable workload (0–100%) for each vendor and day */
+    const BASE = { f1: 85, f2: 45, f3: 90, f4: 60, f5: 25, f6: 70, f7: 50, f8: 35, f9: 80, f10: 40, f11: 65, f12: 30, f13: 55 };
+    const load = (v, i) => {
+      const n = parseInt(v.id.replace(/\D/g, ''), 10) || 1;
+      const noise = Math.abs(Math.sin(n * 12.9898 + i * 78.233) * 43758.5453) % 1;
+      const trend = i < 3 ? 12 : i > 6 ? -18 : 0;
+      return Math.round(Math.max(0, Math.min(100, (BASE[v.id] || 50) + trend + noise * 50 - 25)));
+    };
+    const key = p => String(p).toUpperCase().replace(/\s/g, '');
+    const covers = (v, pair) => {
+      if (!pair) return true;
+      const [a, b] = pair.split('>');
+      return v.pairs.some(p => key(p) === pair || key(p) === a + '<>' + b || key(p) === b + '<>' + a);
+    };
+    const pairs = [...new Set(vendors.flatMap(v => v.pairs).filter(p => p !== 'DTP').map(p => key(p).replace('<>', '>')))].sort();
+
+    const pick = api.el('select', { id: 'capacity-pair' }, api.el('option', { value: '' }, 'All vendors'), pairs.map(p => api.el('option', { value: p }, p.replace('>', ' › '))));
+    const summary = api.el('p', { class: 'capacity-summary', 'aria-live': 'polite' });
+    const grid = api.el('div', { class: 'scroll' });
+
+    function draw() {
+      const pair = pick.value;
+      const rows = vendors.map(v => {
+        const loads = days.map((d, i) => load(v, i));
+        return { v, loads, free: 100 - loads.reduce((s, x) => s + x, 0) / loads.length, ok: covers(v, pair) };
+      });
+      const table = api.el('table', { class: 'capacity-grid' },
+        api.el('thead', {}, api.el('tr', {}, api.el('th', { scope: 'col' }, 'Vendor'),
+          days.map(d => api.el('th', { scope: 'col' }, d.toLocaleDateString('en-GB', { weekday: 'short' }), api.el('br'), d.getDate())),
+          api.el('th', { scope: 'col', class: 'num' }, 'Free'))),
+        api.el('tbody', {}, rows.map(r => api.el('tr', { class: r.ok ? '' : 'capacity-off' },
+          api.el('th', { scope: 'row' }, r.v.name, api.el('span', { class: 'sub' }, r.v.pairs.join(' '))),
+          r.loads.map((x, i) => api.el('td', { title: r.v.name + ', ' + days[i].toDateString() + ': ' + x + '% booked', style: 'background:color-mix(in srgb, #7B1A1A ' + x + '%, white);color:' + (x > 55 ? '#fff' : '#1A1A1A') }, x)),
+          api.el('td', { class: 'num' }, api.el('b', {}, Math.round(r.free) + '%'))))));
+      grid.replaceChildren(table);
+      const fit = rows.filter(r => r.ok && pair).sort((a, b) => b.free - a.free);
+      summary.replaceChildren(!pair ? 'Pick a language pair to find the vendor with the most room.'
+        : !fit.length ? 'No vendor covers ' + pair.replace('>', ' › ') + '.'
+          : api.el('span', {}, fit.length + (fit.length > 1 ? ' vendors cover ' : ' vendor covers ') + pair.replace('>', ' › ') + '. Most room: ', api.el('b', {}, fit[0].v.name), ' (' + Math.round(fit[0].free) + '% free over the next 10 working days).'));
+    }
+    pick.addEventListener('change', draw);
+    container.append(
+      api.el('div', { class: 'row-actions' }, api.el('div', { class: 'field' }, api.el('label', { for: 'capacity-pair' }, 'Language pair'), pick)),
+      summary, grid,
+      api.el('p', { class: 'hint' }, 'Numbers are % of each day already booked. Workload is invented for the demo.'));
+    draw();
+  }
+});
 
 </script>
 </body>
