@@ -710,7 +710,11 @@ SEED_VENDORS.forEach(v => { if (!state.vendors.some(x => x.id === v[0])) state.v
 const clone = x => x == null ? null : JSON.parse(JSON.stringify(x));
 const findReq = id => state.requests.find(r => String(r.id) === String(id)) || null;
 let toolListeners = [];
-function save() { store.set(DATA_KEY, state); }
+function save() { store.set(DATA_KEY, state); markOwner(); }
+/* Copies of FOCUS PM opened from the disk share the data saved in the browser: remember which file saved it last */
+const OWNER_KEY = 'focuspm.file';
+const THIS_FILE = (() => { try { return decodeURIComponent(location.pathname.split('/').pop() || location.pathname || ''); } catch (e) { return location.pathname || ''; } })();
+function markOwner() { store.set(OWNER_KEY, THIS_FILE); }
 let notifying = false, drawingTools = false;
 function changed() {
   save();
@@ -1613,7 +1617,7 @@ const PARAM_LIMITS = { mk: [0, 300], mkRare: [0, 300], mkPe: [0, 300], rush: [0,
 /* parameters saved by an older version may be out of range: they go back to the default value */
 Object.keys(PARAM_LIMITS).forEach(k => { const v = Number(state.params[k]), l = PARAM_LIMITS[k]; if (!isFinite(v) || v < l[0] || v > l[1]) state.params[k] = DEFAULT_PARAMS[k]; });
 const RATES_KEY = 'focuspm.rates';
-function saveRates() { try { localStorage.setItem(RATES_KEY, JSON.stringify({ src: TF.src || '', cards: TF.map(x => Object.assign({}, x)) })); } catch (e) {} }
+function saveRates() { try { localStorage.setItem(RATES_KEY, JSON.stringify({ src: TF.src || '', cards: TF.map(x => Object.assign({}, x)) })); } catch (e) {} markOwner(); }
 function ratesMount() {
   if (!TF) { let s = null; try { s = JSON.parse(localStorage.getItem(RATES_KEY) || 'null'); } catch (e) {} if (s && Array.isArray(s.cards)) s.cards = s.cards.filter(c => c && typeof c === 'object' && /^[A-Z]{2}>[A-Z]{2}$/.test(String(c.pair))); if (s && Array.isArray(s.cards) && s.cards.length) { TF = s.cards.map(c => { ['tMin', 'tMax', 'rMin', 'rMax', 'pMin', 'pMax', 'mkt'].forEach(k => { c[k] = c[k] == null ? NaN : Number(c[k]); }); return c; }); TF.src = s.src; } else { TF = parseCosts(RATES_SAMPLE); TF.src = RATES_SAMPLE; } }
   const src = $('#tf-src'); if (TF.draft != null) { src.value = TF.draft; delete TF.draft; } else if (!src.value && TF.src) src.value = TF.src;
@@ -1760,12 +1764,24 @@ function tenderQuestions(t) {
   return 'To: ' + t.body + '\n\nWith reference to the procedure "' + t.title + '", we kindly request the following clarifications:\n\n' + q.map((x, i) => (i + 1) + '. ' + x).join('\n') + '\n\nKind regards\nCMT S.r.l. · Tenders Office';
 }
 
+function resetDemo() { state = seed(); store.del(DATA_KEY); TF = null; BSEL = null; area = ''; editing = null; Object.keys(noteDrafts).forEach(k => delete noteDrafts[k]); try { localStorage.removeItem('focuspm.area'); localStorage.removeItem(RATES_KEY); } catch (e) {} markOwner(); $('#toasts').replaceChildren(); go('dashboard'); toast('Demo data restored'); }
+/* Opening another copy of FOCUS PM: its data may come from the file opened before */
+function checkOwner() {
+  const prev = store.get(OWNER_KEY);
+  let saved = false; try { saved = !!(localStorage.getItem(DATA_KEY) || localStorage.getItem(RATES_KEY)); } catch (e) {}
+  if (!saved || !THIS_FILE) { markOwner(); return; }
+  if (prev === THIS_FILE) return;
+  openDialog({ title: 'Data from another FOCUS PM file', body: 'The requests, quotes and notes you see were saved by ' + (prev ? 'another file: ' + prev : 'another copy of FOCUS PM') + '. Copies opened in the same browser share this data. Reset to start this file with clean demo data?', actions: [
+    { label: 'Reset demo data', primary: true, focus: true, run() { resetDemo(); } },
+    { label: 'Keep this data', run() { markOwner(); } }] });
+}
+
 /* ---------- Clicks (one handler for the whole app) ---------- */
 const ACTIONS = {
   skip() { $('#main').focus(); },
   reset() {
     openDialog({ title: 'Reset the demo data?', body: 'This restores the sample requests, vendors and parameters and deletes the quotes, traffic lights and notes saved in this browser.', actions: [
-      { label: 'Reset', primary: true, run() { state = seed(); store.del(DATA_KEY); TF = null; BSEL = null; area = ''; editing = null; Object.keys(noteDrafts).forEach(k => delete noteDrafts[k]); try { localStorage.removeItem('focuspm.area'); localStorage.removeItem(RATES_KEY); } catch (e) {} $('#toasts').replaceChildren(); go('dashboard'); toast('Demo data restored'); } }, { label: 'Cancel', focus: true }] });
+      { label: 'Reset', primary: true, run() { resetDemo(); } }, { label: 'Cancel', focus: true }] });
   },
   area(b) { area = b.dataset.area; try { localStorage.setItem('focuspm.area', area); } catch (e) {} render(false); },
   light(b) { const id = b.dataset.id, before = statusOf(findReq(id)), st0 = state; setStatus(id, { light: b.dataset.st }); if (b.dataset.st === 'green' && before !== 'green') toast('Marked as done', { action: { label: 'Undo', run: () => { if (state !== st0 || !findReq(id)) { toast('Nothing to undo: the demo data were reset.'); return; } setStatus(id, { light: before }); focusSoon('button[data-act="light"][data-id="' + CSS.escape(id) + '"][data-st="' + before + '"]'); } } }); },
@@ -1955,6 +1971,7 @@ function closePreview() { const d = $('#pv'); try { d.close(); } catch (e) { d.r
 /* ---------- Start ---------- */
 readHash();
 render(false);
+checkOwner();
 </script>
 
 <script>
