@@ -477,6 +477,16 @@ dialog.dlg textarea {min-height:150px;margin:var(--s2) 0;}
 .deadline-legend i {width:12px;height:12px;border-radius:3px;display:inline-block;border:1px solid var(--rule);}
 
 /* ===== TOOL STYLES: add CSS for tools below this line ===== */
+.file-grid {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:var(--s5);align-items:start;}
+@media (max-width: 860px) { .file-grid {grid-template-columns:1fr;} }
+.file-zone {display:grid;place-items:center;gap:4px;text-align:center;min-height:150px;border:2px dashed var(--muted);border-radius:var(--r-md);cursor:pointer;padding:20px;transition:background .2s, border-color .2s;}
+.file-zone span {color:var(--muted);font-size:var(--t-sm);}
+.file-zone:hover, .file-zone.on {border-color:var(--bordeaux);background:var(--bordeaux-soft);}
+.file-figs {display:grid;grid-template-columns:repeat(4, minmax(0,1fr));gap:8px;margin:8px 0;}
+.file-figs div {border:1px solid var(--rule);border-radius:6px;padding:8px 10px;}
+.file-figs b {display:block;font-size:var(--t-xl);color:var(--bordeaux);font-variant-numeric:tabular-nums;}
+.file-figs span {font-size:var(--t-xs);color:var(--muted);}
+.file-opts {display:grid;grid-template-columns:1fr 1.4fr .8fr;gap:10px;margin-top:12px;}
 
 </style>
 </head>
@@ -2280,6 +2290,80 @@ registerPreview({
    ===== */
 
 /* Add new tools below this line */
+
+/* Word count from a dropped file: .txt, .xliff or .xlf, read in the browser only, then opens a quote. */
+registerTool({
+  id: 'file',
+  title: 'Word count from a dropped file',
+  description: 'Drop a .txt, .xliff or .xlf file. It is read in your browser only and never sent anywhere.',
+  render(container, api) {
+    const SAMPLE = '<?xml version="1.0" encoding="UTF-8"?>\n<xliff version="1.2"><file source-language="en" target-language="it" original="app.strings"><body>\n' +
+      ['Welcome back, {name}!', 'You have %d new messages.', 'Save', 'Cancel', 'Save', 'Your order has shipped and will arrive within three working days.', 'Cancel', 'Delete this item? This cannot be undone.', 'Settings', 'You have %d new messages.', 'Log out of your account on this device.', 'Save']
+        .map((s, i) => '<trans-unit id="' + (i + 1) + '"><source>' + s + '</source><target></target></trans-unit>').join('\n') + '\n</body></file></xliff>';
+    /* placeholders are not words: %@, %d, %1$s, {name}, \n */
+    const PH = /%(\d+\$)?[@dsfi]|\{[^}]*\}|\\n/g;
+    const countWords = s => (s.replace(PH, ' ').match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) || []).length;
+    function segments(name, text) {
+      if (/\.xl?iff?$/i.test(name) || /<xliff/i.test(text)) {
+        const doc = new DOMParser().parseFromString(text, 'application/xml');
+        if (doc.getElementsByTagName('parsererror').length) throw new Error('This XLIFF file is damaged and cannot be read. Export it again from the CAT tool.');
+        if (!doc.getElementsByTagName('source').length) throw new Error('No source segments found in this XLIFF file.');
+        return [...doc.getElementsByTagName('source')].map(n => n.textContent.trim()).filter(Boolean);
+      }
+      if (/\u0000/.test(text) || (text.match(/\uFFFD/g) || []).length > text.length / 50) throw new Error('This is not a text file. Save it as .txt (or export an .xliff) and try again.');
+      return text.split(/(?<=[.!?])\s+|\n+/).map(s => s.trim()).filter(Boolean);
+    }
+    const memo = this; let result = null;
+    const zone = api.el('label', { class: 'file-zone', for: 'file-input' }, api.el('b', {}, 'Drop a file here'), api.el('span', {}, 'or click to choose one · .txt, .xliff, .xlf'));
+    const input = api.el('input', { type: 'file', id: 'file-input', accept: '.txt,.xliff,.xlf', class: 'sr' });
+    const sample = api.el('button', { type: 'button', class: 'btn' }, 'Try a sample XLIFF');
+    const pair = api.el('input', { id: 'file-pair', value: 'EN > IT' });
+    const svc = api.el('select', { id: 'file-svc' }, api.el('option', { value: 'with revision' }, 'Translation + revision'), api.el('option', { value: 'MTPE post-editing' }, 'MT post-editing'));
+    const days = api.el('input', { id: 'file-days', type: 'number', min: '1', value: '3' });
+    const out = api.el('div', { class: 'file-out', 'aria-live': 'polite' });
+    const go = api.el('button', { type: 'button', class: 'btn primary', disabled: true }, 'Open quote');
+
+    function analyse(name, text) {
+      let segs; try { segs = segments(name, text); } catch (e) { result = null; go.disabled = true; out.replaceChildren(api.el('p', { class: 'sub' }, name), api.el('p', { class: 'warnbox bad', role: 'alert' }, e.message)); return; }
+      memo.last = { name, text };
+      const seen = new Set();
+      let words = 0, reps = 0;
+      segs.forEach(s => { const w = countWords(s), k = s.toLowerCase(); words += w; if (seen.has(k)) reps += w; else seen.add(k); });
+      result = { name, segs: segs.length, words, reps };
+      out.replaceChildren(
+        api.el('p', { class: 'sub' }, name),
+        api.el('div', { class: 'file-figs' },
+          [['Segments', segs.length], ['Words', words], ['Repetitions', reps], ['New words', words - reps]].map(([l, v]) => api.el('div', {}, api.el('b', {}, api.formatNumber(v)), api.el('span', {}, l)))),
+        api.el('p', { class: 'hint' }, 'Placeholders such as %@, %d and {name} are not counted as words.'));
+      go.disabled = !words;
+    }
+    function read(file) {
+      if (!file) return;
+      if (file.size > 5e6) { api.toast('File too large for the demo (max 5 MB).'); return; }
+      const fr = new FileReader();
+      fr.onload = () => analyse(file.name, String(fr.result));
+      fr.readAsText(file);
+    }
+    input.addEventListener('change', () => read(input.files[0]));
+    ['dragenter', 'dragover'].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.add('on'); }));
+    ['dragleave', 'drop'].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.remove('on'); }));
+    zone.addEventListener('drop', e => read(e.dataTransfer.files[0]));
+    sample.addEventListener('click', () => analyse('sample-app-strings.xliff', SAMPLE));
+    days.addEventListener('change', () => { const n = Number(days.value); if (!(n >= 1 && n <= 60)) { api.toast('Enter working days from 1 to 60.'); days.value = '3'; } else days.value = String(Math.round(n)); });
+    go.addEventListener('click', () => {
+      if (!result) return;
+      const n = Number(days.value), d = n >= 1 && n <= 60 ? Math.round(n) : 3;
+      if (!/^\s*[A-Za-z]{2,3}\s*(?:>|›|-|\/|to)\s*[A-Za-z]{2,3}\s*$/i.test(pair.value)) { api.toast('Write the language pair as two codes, for example EN > IT.'); pair.focus(); return; }
+      api.openQuote(api.formatNumber(result.words) + ' words ' + pair.value.trim() + ' ' + svc.value + ', including ' + api.formatNumber(result.reps) + ' repetitions, delivery within ' + d + ' working days.'); /* the file name stays out of the text: a name such as "urgent_leaflet.txt" would add a rush surcharge */
+    });
+    const f = (id, label, el) => api.el('div', { class: 'field' }, api.el('label', { for: id }, label), el);
+    container.append(
+      api.el('div', { class: 'file-grid' },
+        api.el('div', {}, zone, input, api.el('div', { class: 'row-actions', style: 'margin-top:8px' }, sample)),
+        api.el('div', {}, out, api.el('div', { class: 'file-opts' }, f('file-pair', 'Language pair', pair), f('file-svc', 'Service', svc), f('file-days', 'Working days', days)), api.el('div', { class: 'row-actions', style: 'margin-top:12px' }, go))));
+    if (memo.last) analyse(memo.last.name, memo.last.text); else out.replaceChildren(api.el('p', { class: 'empty' }, 'No file yet.'));
+  }
+});
 
 </script>
 </body>
