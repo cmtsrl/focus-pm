@@ -477,6 +477,16 @@ dialog.dlg textarea {min-height:150px;margin:var(--s2) 0;}
 .deadline-legend i {width:12px;height:12px;border-radius:3px;display:inline-block;border:1px solid var(--rule);}
 
 /* ===== TOOL STYLES: add CSS for tools below this line ===== */
+.history-opts {display:grid;grid-template-columns:repeat(2, minmax(0,240px));gap:12px;}
+.history-note {margin:14px 0 6px;font-size:var(--t-sm);}
+.history-note .history-warn {color:var(--bordeaux);}
+.history-chart svg {width:100%;max-width:720px;height:auto;display:block;}
+.history-grid {stroke:var(--rule);stroke-width:1;}
+.history-axis {font:11px var(--font);fill:var(--muted);}
+.history-avg {stroke:var(--ink);stroke-width:1.5;stroke-dasharray:5 4;}
+.history-dot {fill:#fff;stroke:var(--ink);stroke-width:2;}
+.history-now {fill:var(--bordeaux);}
+.history-label {font:700 12px var(--font);fill:var(--bordeaux);}
 
 </style>
 </head>
@@ -2280,6 +2290,68 @@ registerPreview({
    ===== */
 
 /* Add new tools below this line */
+
+/* Price history check: 20 invented past quotes per pair and service, compared with today's price. */
+registerTool({
+  id: 'history',
+  title: 'Price history check',
+  description: 'Is today\'s price above or below what we quoted before for the same language pair?',
+  render(container, api) {
+    const PAIRS = ['EN>IT', 'EN>DE', 'EN>FR', 'EN>ES', 'FR>IT', 'IT>EN'];
+    const SVCS = [['tep', 'Translation + revision'], ['mtpe', 'MT post-editing + revision'], ['trad', 'Translation only'], ['sub', 'Subtitling (per minute)'], ['tra', 'Transcription (per minute)']];
+    /* stable pseudo-random numbers, so the invented history is the same every time */
+    const rnd = seed => () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+    function history(pair, svc, now) {
+      let h = 11; for (const c of pair + svc) h = (h * 31 + c.charCodeAt(0)) % 2147483647;
+      const r = rnd(h || 1), out = [];
+      for (let i = 0; i < 20; i++) {
+        const daysAgo = Math.round(15 + r() * 350), drift = 1 - daysAgo / 365 * 0.06;
+        out.push({ date: new Date(api.today().getTime() - daysAgo * 864e5), price: Math.round(now * drift * (0.88 + r() * 0.22) * (now >= 1 ? 100 : 1000)) / (now >= 1 ? 100 : 1000) });
+      }
+      return out.sort((a, b) => a.date - b.date);
+    }
+    const sel = (id, list) => api.el('select', { id }, list.map(([v, l]) => api.el('option', { value: v }, l)));
+    const pairSel = sel('history-pair', []), svcSel = sel('history-svc', SVCS);
+    /* only the pairs that have a vendor for the chosen service */
+    function fillPairs() {
+      const cur = pairSel.value, ok = PAIRS.filter(p => api.price({ svc: svcSel.value, pair: p, qty: 1 }).ok);
+      pairSel.replaceChildren(...ok.map(p => api.el('option', { value: p }, p.replace('>', ' › '))));
+      if (ok.indexOf(cur) >= 0) pairSel.value = cur;
+    }
+    const chart = api.el('div', { class: 'history-chart' }), note = api.el('p', { class: 'history-note', 'aria-live': 'polite' });
+    function draw() {
+      const p = api.price({ svc: svcSel.value, pair: pairSel.value, qty: 1 });
+      const unit = (api.services[svcSel.value] || {}).unit === 'minutes' ? 'minute' : 'word', fmt = v => unit === 'minute' ? api.formatMoney(v) : api.formatRate(v);
+      if (!p.ok) { chart.replaceChildren(); note.textContent = p.why; return; }
+      /* the past quotes were made with the standard markups (35%, 40% for rare languages, 40% for post-editing and revision): a higher markup today shows as a jump */
+      const P = api.params(), rare = ['JA', 'ZH', 'AR', 'FI', 'HU', 'KO', 'EL', 'TR', 'RU'].indexOf(pairSel.value.split('>')[1]) >= 0;
+      const k = svcSel.value === 'mtpe' || svcSel.value === 'rev' ? 'mkPe' : rare && svcSel.value !== 'sub' && svcSel.value !== 'tra' ? 'mkRare' : 'mk', STD = { mk: 35, mkRare: 40, mkPe: 40 };
+      const now = p.unit, ref = now * (1 + STD[k] / 100) / (1 + P[k] / 100), pts = history(pairSel.value, svcSel.value, ref), avg = pts.reduce((s, x) => s + x.price, 0) / pts.length;
+      const W = 640, H = 240, L = 54, R = 20, T = 16, B = 30;
+      const t0 = pts[0].date.getTime(), t1 = api.today().getTime();
+      const lo = Math.min(now, ...pts.map(x => x.price)) * 0.95, hi = Math.max(now, ...pts.map(x => x.price)) * 1.05;
+      const X = t => L + (t - t0) / (t1 - t0) * (W - L - R), Y = v => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+      const ns = 'http://www.w3.org/2000/svg', s = (tag, a, txt) => { const n = document.createElementNS(ns, tag); for (const k in a) n.setAttribute(k, a[k]); if (txt != null) n.textContent = txt; return n; };
+      const svg = s('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': 'Past prices for ' + pairSel.value + ' compared with today' });
+      for (let i = 0; i <= 3; i++) { const v = lo + (hi - lo) * i / 3; svg.append(s('line', { x1: L, x2: W - R, y1: Y(v), y2: Y(v), class: 'history-grid' }), s('text', { x: L - 8, y: Y(v) + 4, class: 'history-axis', 'text-anchor': 'end' }, fmt(v))); }
+      [0, 0.5, 1].forEach(f => { const t = t0 + (t1 - t0) * f; svg.append(s('text', { x: X(t), y: H - 8, class: 'history-axis', 'text-anchor': f === 0 ? 'start' : f === 1 ? 'end' : 'middle' }, new Date(t).toLocaleDateString('en-GB', { month: 'short', year: '2-digit' }))); });
+      svg.append(s('line', { x1: L, x2: W - R, y1: Y(avg), y2: Y(avg), class: 'history-avg' }), s('text', { x: L + 6, y: Y(avg) - 6, class: 'history-axis', 'text-anchor': 'start' }, 'average ' + fmt(avg)));
+      pts.forEach(x => { const c = s('circle', { cx: X(x.date.getTime()), cy: Y(x.price), r: 5, class: 'history-dot' }); c.append(s('title', {}, x.date.toLocaleDateString('en-GB') + ': ' + fmt(x.price))); svg.append(c); });
+      const nx = X(t1), ny = Y(now);
+      svg.append(s('rect', { x: nx - 7, y: ny - 7, width: 14, height: 14, transform: 'rotate(45 ' + nx + ' ' + ny + ')', class: 'history-now' }), s('text', { x: nx - 12, y: ny - 12, class: 'history-label', 'text-anchor': 'end' }, 'today ' + fmt(now)));
+      chart.replaceChildren(svg);
+      const diff = (now - avg) / avg;
+      note.replaceChildren('Today\'s price ', api.el('b', {}, fmt(now) + ' per ' + unit), ' is ', api.el('b', { class: Math.abs(diff) > 0.08 ? 'history-warn' : '' }, (Math.abs(diff) * 100).toFixed(1) + '% ' + (diff >= 0 ? 'above' : 'below')), ' the average of the last 20 quotes (' + fmt(avg) + ').' + (diff > 0.08 ? ' The client may notice the increase.' : diff < -0.08 ? ' Check that we are not underpricing.' : ' In line with what we usually quote.'));
+    }
+    pairSel.addEventListener('change', draw);
+    svcSel.addEventListener('change', () => { fillPairs(); draw(); });
+    fillPairs();
+    const f = (id, label, el) => api.el('div', { class: 'field' }, api.el('label', { for: id }, label), el);
+    container.append(api.el('div', { class: 'history-opts' }, f('history-pair', 'Language pair', pairSel), f('history-svc', 'Service', svcSel)), note, chart, api.el('p', { class: 'hint' }, 'Past quotes are invented for the demo. Today\'s price comes from the pricing engine.'));
+    draw();
+    api.onChange(draw);
+  }
+});
 
 </script>
 </body>
